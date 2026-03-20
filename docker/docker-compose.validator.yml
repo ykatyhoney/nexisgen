@@ -2,7 +2,7 @@ name: nexis-validator
 
 services:
   validator:
-    image: ${NEXIS_VALIDATOR_IMAGE:-docker.io/rendixnetwork/nexis:latest}
+    image: ${NEXIS_VALIDATOR_IMAGE:-rendixnetwork/nexis:latest}
     container_name: nexis-validator
     restart: unless-stopped
     env_file:
