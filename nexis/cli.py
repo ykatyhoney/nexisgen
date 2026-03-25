@@ -887,7 +887,6 @@ async def _run_validator_loop(
                             )
                             if is_owner_validator:
                                 try:
-                                    start_time = time.time()
                                     published_rows_by_hotkey = await _upload_validated_datasets_to_owner_bucket(
                                         owner_store=owner_db_store,
                                         source_store_for_hotkey=store_for_hotkey,
@@ -896,12 +895,6 @@ async def _run_validator_loop(
                                         interval_id=next_interval_start,
                                         workdir=settings.workdir / "validator",
                                     )
-                                    end_time = time.time()
-                                    logger.info("owner sync time=%s", end_time - start_time)  
-                                    print(f"=========================================")
-                                    print(f"owner sync time={end_time - start_time}")  
-                                    print(f"=========================================") 
-                                    start_time = end_time
                                     for rows in published_rows_by_hotkey.values():
                                         if not rows:
                                             continue
@@ -921,12 +914,6 @@ async def _run_validator_loop(
                                             "skipping record-info write interval=%s reason=record_info_read_untrusted",
                                             _interval_label(next_interval_start),
                                         )
-                                    end_time = time.time()
-                                    logger.info("record info write time=%s", end_time - start_time)  
-                                    print(f"=========================================")
-                                    print(f"record info write time={end_time - start_time}")  
-                                    print(f"=========================================") 
-                                    start_time = end_time
                                 except Exception as exc:
                                     logger.exception(
                                         "owner sync failed for interval=%s: %s",
