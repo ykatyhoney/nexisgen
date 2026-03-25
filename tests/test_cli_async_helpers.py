@@ -6,12 +6,81 @@ from types import SimpleNamespace
 from nexis.cli import (
     _fetch_hotkeys_with_commitments,
     _load_record_info_snapshot,
+    _resolve_llm_runtime,
     _run_miner_loop,
     _run_validator_loop,
 )
 from nexis.models import ValidationDecision
 from nexis.config import Settings
 from .helpers import LocalObjectStore, run_async
+
+
+def test_resolve_llm_runtime_prefers_openai_when_present() -> None:
+    settings = Settings()
+    settings.openai_api_key = "openai-key"
+    settings.gemini_api_key = "gemini-key"
+
+    provider, api_key, model, base_url, route = _resolve_llm_runtime(
+        settings,
+        openai_model="gpt-4o",
+    )
+
+    assert provider == "openai"
+    assert api_key == "openai-key"
+    assert model == "gpt-4o"
+    assert base_url is None
+    assert route == "openai_key"
+
+
+def test_resolve_llm_runtime_uses_gemini_when_openai_missing() -> None:
+    settings = Settings()
+    settings.openai_api_key = ""
+    settings.gemini_api_key = "gemini-key"
+
+    provider, api_key, model, base_url, route = _resolve_llm_runtime(
+        settings,
+        openai_model="gpt-4o",
+    )
+
+    assert provider == "gemini"
+    assert api_key == "gemini-key"
+    assert model == "gemini-3.1-flash-lite-preview"
+    assert base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert route == "gemini_key"
+
+
+def test_resolve_llm_runtime_upgrades_legacy_openai_model() -> None:
+    settings = Settings()
+    settings.openai_api_key = "openai-key"
+    settings.gemini_api_key = ""
+
+    provider, api_key, model, base_url, route = _resolve_llm_runtime(
+        settings,
+        openai_model="gpt-4o-mini",
+    )
+
+    assert provider == "openai"
+    assert api_key == "openai-key"
+    assert model == "gpt-4o"
+    assert base_url is None
+    assert route == "openai_key"
+
+
+def test_resolve_llm_runtime_without_any_key() -> None:
+    settings = Settings()
+    settings.openai_api_key = ""
+    settings.gemini_api_key = ""
+
+    provider, api_key, model, base_url, route = _resolve_llm_runtime(
+        settings,
+        openai_model="gpt-4o",
+    )
+
+    assert provider == "openai"
+    assert api_key == ""
+    assert model == "gpt-4o"
+    assert base_url is None
+    assert route == "no_api_key"
 
 
 def test_fetch_hotkeys_with_commitments_filters_excluded_and_missing(

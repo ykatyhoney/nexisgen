@@ -45,14 +45,15 @@ class Settings(BaseSettings):
     )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    caption_model: str = Field(default="gpt-4o-mini", alias="NEXIS_CAPTION_MODEL")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    caption_model: str = Field(default="gpt-4o", alias="NEXIS_CAPTION_MODEL")
     caption_timeout_sec: int = Field(default=30, alias="NEXIS_CAPTION_TIMEOUT_SEC")
     validator_semantic_check_enabled: bool = Field(
         default=True,
         alias="NEXIS_VALIDATOR_SEMANTIC_CHECK_ENABLED",
     )
     validator_semantic_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-4o",
         alias="NEXIS_VALIDATOR_SEMANTIC_MODEL",
     )
     validator_semantic_timeout_sec: int = Field(

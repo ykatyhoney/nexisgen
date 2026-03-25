@@ -319,7 +319,9 @@ nexis validate
   - verify validator can read metagraph and bucket credentials
 - **Semantic checks failing unexpectedly**
   - disable with `NEXIS_VALIDATOR_SEMANTIC_CHECK_ENABLED=false` for isolation
-  - confirm `OPENAI_API_KEY` and timeout/model settings
+  - if `OPENAI_API_KEY` is set, validator uses `gpt-4o`
+  - if `OPENAI_API_KEY` is unset and `GEMINI_API_KEY` is set, validator uses `gemini-3.1-flash-lite-preview`
+  - confirm timeout/model settings and provider key configuration
 - **Source authenticity failures**
   - confirm `yt-dlp` and `ffmpeg` are installed and working
   - verify miner `source_video_url` is valid and reachable

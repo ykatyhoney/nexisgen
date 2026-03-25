@@ -52,6 +52,9 @@ console = Console()
 logger = logging.getLogger(__name__)
 _WEIGHT_RETRY_BACKOFF_BASE_SEC = 10
 _WEIGHT_RETRY_BACKOFF_MAX_SEC = 300
+_OPENAI_PRIMARY_MODEL = "gpt-4o"
+_GEMINI_PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
+_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 def _configure_logging(level: str, *, debug: bool = False) -> None:
@@ -293,6 +296,44 @@ def _weight_retry_backoff_sec(failure_count: int) -> int:
     return min(_WEIGHT_RETRY_BACKOFF_MAX_SEC, _WEIGHT_RETRY_BACKOFF_BASE_SEC * (2**exponent))
 
 
+def _resolve_llm_runtime(
+    settings: Settings,
+    *,
+    openai_model: str,
+) -> tuple[str, str, str, str | None, str]:
+    resolved_openai_model = openai_model.strip()
+    # Auto-upgrade legacy default to requested OpenAI model.
+    if not resolved_openai_model or resolved_openai_model == "gpt-4o-mini":
+        resolved_openai_model = _OPENAI_PRIMARY_MODEL
+    openai_api_key = settings.openai_api_key.strip()
+    gemini_api_key = settings.gemini_api_key.strip()
+    if openai_api_key and gemini_api_key:
+        logger.info("both OPENAI_API_KEY and GEMINI_API_KEY are set; preferring OpenAI")
+    if openai_api_key:
+        return (
+            "openai",
+            openai_api_key,
+            resolved_openai_model,
+            None,
+            "openai_key",
+        )
+    if gemini_api_key:
+        return (
+            "gemini",
+            gemini_api_key,
+            _GEMINI_PRIMARY_MODEL,
+            _GEMINI_OPENAI_BASE_URL,
+            "gemini_key",
+        )
+    return (
+        "openai",
+        "",
+        resolved_openai_model,
+        None,
+        "no_api_key",
+    )
+
+
 async def _fetch_hotkeys_with_commitments(
     *,
     settings: Settings,
@@ -397,10 +438,32 @@ def mine(
     creds = _build_remote_credentials(settings)
     creds.validate_bucket_name()
     store = HippiusS3Store(creds)
+    (
+        caption_provider,
+        caption_api_key,
+        caption_model,
+        caption_base_url,
+        caption_route,
+    ) = _resolve_llm_runtime(
+        settings,
+        openai_model=settings.caption_model,
+    )
+    logger.info(
+        "miner caption runtime provider=%s model=%s route=%s",
+        caption_provider,
+        caption_model,
+        caption_route,
+    )
+    if caption_route == "no_api_key":
+        logger.warning(
+            "miner caption key missing; fallback captions will be used until OPENAI_API_KEY or GEMINI_API_KEY is set"
+        )
     captioner = Captioner(
-        api_key=settings.openai_api_key,
-        model=settings.caption_model,
+        api_key=caption_api_key,
+        model=caption_model,
         timeout_sec=settings.caption_timeout_sec,
+        provider=caption_provider,
+        base_url=caption_base_url,
     )
     pipeline = MinerPipeline(  # type: ignore[arg-type]
         store=store,
@@ -564,12 +627,34 @@ def validate(
         store_cache[hotkey] = store
         return store
 
+    (
+        semantic_provider,
+        semantic_api_key,
+        semantic_model,
+        semantic_base_url,
+        semantic_route,
+    ) = _resolve_llm_runtime(
+        settings,
+        openai_model=settings.validator_semantic_model,
+    )
+    logger.info(
+        "validator semantic runtime provider=%s model=%s route=%s",
+        semantic_provider,
+        semantic_model,
+        semantic_route,
+    )
+    if semantic_route == "no_api_key" and settings.validator_semantic_check_enabled:
+        logger.warning(
+            "validator semantic checks enabled but no API key configured; semantic checker will fail-open"
+        )
     semantic_checker = CaptionSemanticChecker(
         enabled=settings.validator_semantic_check_enabled,
-        api_key=settings.openai_api_key,
-        model=settings.validator_semantic_model,
+        api_key=semantic_api_key,
+        model=semantic_model,
         timeout_sec=settings.validator_semantic_timeout_sec,
         max_samples=settings.validator_semantic_max_samples,
+        provider=semantic_provider,
+        base_url=semantic_base_url,
     )
     owner_db_store: HippiusS3Store | None = None
     if is_owner_validator:
@@ -802,6 +887,7 @@ async def _run_validator_loop(
                             )
                             if is_owner_validator:
                                 try:
+                                    start_time = time.time()
                                     published_rows_by_hotkey = await _upload_validated_datasets_to_owner_bucket(
                                         owner_store=owner_db_store,
                                         source_store_for_hotkey=store_for_hotkey,
@@ -810,6 +896,12 @@ async def _run_validator_loop(
                                         interval_id=next_interval_start,
                                         workdir=settings.workdir / "validator",
                                     )
+                                    end_time = time.time()
+                                    logger.info("owner sync time=%s", end_time - start_time)  
+                                    print(f"=========================================")
+                                    print(f"owner sync time={end_time - start_time}")  
+                                    print(f"=========================================") 
+                                    start_time = end_time
                                     for rows in published_rows_by_hotkey.values():
                                         if not rows:
                                             continue
@@ -829,6 +921,12 @@ async def _run_validator_loop(
                                             "skipping record-info write interval=%s reason=record_info_read_untrusted",
                                             _interval_label(next_interval_start),
                                         )
+                                    end_time = time.time()
+                                    logger.info("record info write time=%s", end_time - start_time)  
+                                    print(f"=========================================")
+                                    print(f"record info write time={end_time - start_time}")  
+                                    print(f"=========================================") 
+                                    start_time = end_time
                                 except Exception as exc:
                                     logger.exception(
                                         "owner sync failed for interval=%s: %s",

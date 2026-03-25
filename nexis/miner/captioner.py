@@ -12,10 +12,20 @@ logger = logging.getLogger(__name__)
 
 
 class Captioner:
-    def __init__(self, api_key: str, model: str, timeout_sec: int = 30):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout_sec: int = 30,
+        *,
+        provider: str = "openai",
+        base_url: str | None = None,
+    ):
         self._api_key = api_key
         self._model = model
         self._timeout_sec = timeout_sec
+        self._provider = provider
+        self._base_url = base_url
 
     def _fallback_caption(self) -> str:
         return "A short five second video clip with visible motion."
@@ -34,11 +44,20 @@ class Captioner:
     ) -> str:
         # Fallback path when API key is not configured.
         if not self._api_key:
-            logger.warning("caption fallback used reason=missing_openai_api_key")
+            logger.warning(
+                "caption fallback used reason=missing_%s_api_key",
+                self._provider,
+            )
             return self._fallback_caption()
 
         try:
-            client = OpenAI(api_key=self._api_key, timeout=self._timeout_sec)
+            client_kwargs: dict[str, object] = {
+                "api_key": self._api_key,
+                "timeout": self._timeout_sec,
+            }
+            if self._base_url:
+                client_kwargs["base_url"] = self._base_url
+            client = OpenAI(**client_kwargs)
             valid_frames = [p for p in (frame_paths or []) if p.exists()]
             if not valid_frames and first_frame_path and first_frame_path.exists():
                 valid_frames = [first_frame_path]

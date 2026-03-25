@@ -421,7 +421,7 @@ class ValidatorPipeline:
             records = loaded.records
             indices = select_row_indices(len(records), loaded.hotkey, interval_seed)
             sampled = [records[i] for i in indices]
-            logger.debug(
+            logger.info(
                 "sampling hotkey=%s interval=%d total_records=%d sampled=%d",
                 loaded.hotkey,
                 loaded.interval_id,

@@ -8,10 +8,11 @@ import re
 from pathlib import Path
 
 from ..models import ClipRecord
-
+import logging
+logger = logging.getLogger(__name__)
 
 class CaptionSemanticChecker:
-    """Optional semantic checker using OpenAI vision.
+    """Optional semantic checker using OpenAI-compatible vision APIs.
 
     Fail-open behavior:
     - disabled checker returns no failures
@@ -27,12 +28,16 @@ class CaptionSemanticChecker:
         model: str,
         timeout_sec: int,
         max_samples: int,
+        provider: str = "openai",
+        base_url: str | None = None,
     ):
         self._enabled = enabled
         self._api_key = api_key.strip()
         self._model = model
         self._timeout_sec = timeout_sec
         self._max_samples = max(0, max_samples)
+        self._provider = provider
+        self._base_url = base_url
 
     @property
     def active(self) -> bool:
@@ -50,7 +55,13 @@ class CaptionSemanticChecker:
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=self._api_key, timeout=self._timeout_sec)
+            client_kwargs: dict[str, object] = {
+                "api_key": self._api_key,
+                "timeout": self._timeout_sec,
+            }
+            if self._base_url:
+                client_kwargs["base_url"] = self._base_url
+            client = OpenAI(**client_kwargs)
         except Exception:
             return []
 

@@ -58,7 +58,8 @@ docker inspect --format '{{index .RepoDigests 0}}' nexis-validator
 - `NEXIS_VALIDATOR_SEMANTIC_MODEL`
 - `NEXIS_VALIDATOR_SEMANTIC_TIMEOUT_SEC`
 - `NEXIS_VALIDATOR_SEMANTIC_MAX_SAMPLES`
-- `OPENAI_API_KEY` (required if semantic checks are enabled)
+- `OPENAI_API_KEY` (preferred; uses `gpt-4o`)
+- `GEMINI_API_KEY` (optional fallback; uses `gemini-3.1-flash-lite-preview` when OpenAI key is unset)
 - `NEXIS_VALIDATION_API_URL` (optional evidence API endpoint)
 - `NEXIS_VALIDATION_API_TIMEOUT_SEC`
 
@@ -111,8 +112,10 @@ nexis validate --specs video_v1
 - S3 credential failures:
   - confirm `NEXIS_RECORD_INFO_*` and (owner mode) `NEXIS_OWNER_DB_*` values
   - confirm endpoint and region (`HIPPIUS_S3_ENDPOINT`, `HIPPIUS_S3_REGION`)
-- OpenAI optional behavior:
-  - if `OPENAI_API_KEY` is unset, disable semantic checks with `NEXIS_VALIDATOR_SEMANTIC_CHECK_ENABLED=false`
+- LLM provider behavior:
+  - validator semantic checks use OpenAI (`gpt-4o`) when `OPENAI_API_KEY` is set
+  - if OpenAI is unset but `GEMINI_API_KEY` is set, checks use Gemini (`gemini-3.1-flash-lite-preview`)
+  - if neither key is set, disable semantic checks with `NEXIS_VALIDATOR_SEMANTIC_CHECK_ENABLED=false`
 - Weight submission retries:
   - inspect validator logs for `set_weights failed`
   - confirm wallet hotkey/key material and chain access (`BT_NETWORK`)
