@@ -320,6 +320,65 @@ def test_validator_rejects_malformed_manifest_as_schema_invalid(tmp_path: Path) 
     run_async(run())
 
 
+def test_validator_handles_missing_committed_read_credentials_per_miner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        good_store = LocalObjectStore(tmp_path / "good-store")
+        good_hotkey = "miner-good"
+        bad_hotkey = "miner-bad"
+        interval_id = 14
+        key_base = f"{interval_id}"
+
+        clip_file = tmp_path / "good-clip.mp4"
+        frame_file = tmp_path / "good-frame.jpg"
+        clip_file.write_bytes(b"good-clip-data")
+        frame_file.write_bytes(b"good-frame-data")
+        row = _record(
+            "good-c1",
+            0.0,
+            clip_sha256=sha256_file(clip_file),
+            frame_sha256=sha256_file(frame_file),
+        )
+
+        dataset = tmp_path / "good-dataset.parquet"
+        manifest = tmp_path / "good-manifest.json"
+        write_dataset_parquet([row], dataset)
+        write_manifest(
+            IntervalManifest(
+                netuid=1,
+                miner_hotkey=good_hotkey,
+                interval_id=interval_id,
+                record_count=1,
+                dataset_sha256=sha256_file(dataset),
+            ),
+            manifest,
+        )
+        await good_store.upload_file(f"{key_base}/dataset.parquet", dataset)
+        await good_store.upload_file(f"{key_base}/manifest.json", manifest)
+        await good_store.upload_file(f"{key_base}/{row.clip_uri}", clip_file)
+        await good_store.upload_file(f"{key_base}/{row.first_frame_uri}", frame_file)
+
+        def _store_for_hotkey(hotkey: str) -> LocalObjectStore:
+            if hotkey == bad_hotkey:
+                raise RuntimeError("missing committed read credentials")
+            return good_store
+
+        monkeypatch.setattr("nexis.validator.pipeline.select_miners", lambda hotkeys, _seed: list(hotkeys))
+        pipeline = ValidatorPipeline(store_for_hotkey=_store_for_hotkey)
+        decisions, _weights = await pipeline.validate_interval(
+            candidate_hotkeys=[bad_hotkey, good_hotkey],
+            interval_id=interval_id,
+        )
+        by_hotkey = {item.miner_hotkey: item for item in decisions}
+        assert by_hotkey[bad_hotkey].accepted is False
+        assert "missing_committed_read_credentials" in by_hotkey[bad_hotkey].failures
+        assert by_hotkey[good_hotkey].accepted is True
+
+    run_async(run())
+
+
 def test_validator_rejects_invalid_dataset_schema(tmp_path: Path) -> None:
     async def run() -> None:
         store = LocalObjectStore(tmp_path / "store")

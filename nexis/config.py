@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     # Optional validator -> evidence API reporting
     validation_api_url: str = Field(default="", alias="NEXIS_VALIDATION_API_URL")
     validation_api_timeout_sec: float = Field(default=10.0, alias="NEXIS_VALIDATION_API_TIMEOUT_SEC")
+    latest_result_timeout_sec: float = Field(default=10.0, alias="NEXIS_LATEST_RESULT_TIMEOUT_SEC")
 
     # Evidence API server settings
     validation_api_postgres_dsn: str = Field(

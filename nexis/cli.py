@@ -8,8 +8,13 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 from typing import Callable
 from typing import TYPE_CHECKING
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 import typer
 from rich.console import Console
@@ -47,6 +52,7 @@ from .validator.reporting import ValidationResultReporter
 
 if TYPE_CHECKING:
     from .chain.credentials import ReadCredentialCommitmentManager
+    from .scoring import WeightComputer
 
 app = typer.Typer(name="nexis", no_args_is_help=True)
 console = Console()
@@ -396,6 +402,102 @@ async def _fetch_hotkeys_with_commitments(
 
 async def _sleep_poll(seconds: float) -> None:
     await asyncio.sleep(max(seconds, 0.5))
+
+
+def _resolve_latest_result_url(validation_api_url: str) -> str:
+    """Resolve the API endpoint used to fetch cached latest results."""
+    raw_url = validation_api_url.strip()
+    if not raw_url:
+        return raw_url
+    parsed = urlparse(raw_url)
+    if parsed.scheme and parsed.netloc:
+        if parsed.path in {"/v1/get_latest_result", "/get_latest_result"}:
+            return raw_url
+        return urlunparse((parsed.scheme, parsed.netloc, "/v1/get_latest_result", "", "", ""))
+    if raw_url.endswith("/v1/get_latest_result") or raw_url.endswith("/get_latest_result"):
+        return raw_url
+    return f"{raw_url.rstrip('/')}/v1/get_latest_result"
+
+
+def _fetch_latest_result_snapshot_sync(*, url: str, timeout_sec: float) -> dict[str, Any]:
+    req = urllib_request.Request(
+        url,
+        data=None,
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=float(timeout_sec)) as response:
+            status_code = int(getattr(response, "status", 200))
+            body = response.read()
+    except urllib_error.HTTPError as exc:
+        raise RuntimeError(f"latest-result request failed status={int(exc.code)}") from exc
+    except urllib_error.URLError as exc:
+        raise RuntimeError(f"latest-result request failed error={exc}") from exc
+
+    if status_code < 200 or status_code >= 300:
+        raise RuntimeError(f"latest-result request failed status={status_code}")
+
+    try:
+        parsed = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError("latest-result response is not valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("latest-result response must be a JSON object")
+    return parsed
+
+
+
+async def fetch_latest_result_snapshot(*, url: str, timeout_sec: float) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        _fetch_latest_result_snapshot_sync,
+        url=url,
+        timeout_sec=timeout_sec,
+    )
+
+
+
+def compute_score_totals_from_decisions(
+    *,
+    decisions: list[dict[str, Any]],
+    interval_start: int,
+    interval_end: int,
+    weight_computer: WeightComputer,
+) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    seen_keys: set[tuple[str, int, str]] = set()
+
+    for row in decisions:
+        if row.get("accepted") is not True:
+            continue
+
+        miner_hotkey = str(row.get("miner_hotkey", "")).strip()
+        if not miner_hotkey:
+            continue
+
+        validator_hotkey = str(row.get("validator_hotkey", "")).strip()
+        try:
+            interval_id = int(row.get("interval_id"))
+        except (TypeError, ValueError):
+            continue
+        if interval_id < interval_start or interval_id >= interval_end:
+            continue
+
+        dedupe_key = (validator_hotkey, interval_id, miner_hotkey)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        try:
+            record_count = int(row.get("record_count", 0))
+        except (TypeError, ValueError):
+            record_count = 0
+        score = weight_computer.score_from_sample_count(record_count)
+        if score <= 0:
+            continue
+        totals[miner_hotkey] = totals.get(miner_hotkey, 0.0) + score
+
+    return totals
 
 
 @app.command("commit-credentials")
@@ -1041,6 +1143,9 @@ async def _run_validator_loop(
             UPLOAD_DEADLINE_RESERVED_BLOCKS,
             ",".join(enabled_specs),
         )
+        latest_result_url = _resolve_latest_result_url(settings.validation_api_url)
+        if latest_result_url:
+            logger.info("latest-result endpoint resolved to %s", latest_result_url)
 
         while True:
             try:
@@ -1195,35 +1300,48 @@ async def _run_validator_loop(
                 )
                 if should_try_submit:
                     submission_block = current_weight_epoch * WEIGHT_SUBMISSION_INTERVAL_BLOCKS
-                    if frozen_epoch_weights is None or frozen_epoch != current_weight_epoch:
-                        if not epoch_score_totals:
-                            # Passing an empty map triggers chain payload fallback (UID0=1, others=0).
-                            frozen_epoch_weights = {}
-                            logger.info(
-                                "no valid miner hotkeys in epoch=%d; forcing burn fallback to UID0",
-                                current_weight_epoch,
-                            )
-                        else:
-                            frozen_epoch_weights = validator.weight_computer.compute_weights_from_totals(
-                                dict(epoch_score_totals)
-                            )
-                        if reporter is not None and frozen_epoch_weights:
-                            current_interval_id = _current_interval_start(current_block)
-                            invalid_for_submission = set(
-                                await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
-                            )
-                            if invalid_for_submission:
-                                for hotkey in invalid_for_submission:
-                                    if hotkey in frozen_epoch_weights:
-                                        frozen_epoch_weights[hotkey] = 0.0
-                                frozen_epoch_weights = validator.weight_computer.normalize_weights(
-                                    frozen_epoch_weights
-                                )
-                                logger.info(
-                                    "zeroed invalid hotkeys before set_weights count=%d",
-                                    len(invalid_for_submission),
-                                )
-                        frozen_epoch = current_weight_epoch
+                    snapshot = await fetch_latest_result_snapshot(
+                        url=latest_result_url,
+                        timeout_sec=settings.latest_result_timeout_sec,
+                    )
+
+                    decisions_raw = snapshot.get("decisions")
+                    if not isinstance(decisions_raw, list):
+                        decisions_raw = []
+                    decisions: list[dict[str, Any]] = [
+                        row for row in decisions_raw if isinstance(row, dict)
+                    ]
+                    score_totals = compute_score_totals_from_decisions(
+                        decisions=decisions,
+                        interval_start=submission_block - WEIGHT_SUBMISSION_INTERVAL_BLOCKS - INTERVAL_LENGTH_BLOCKS,
+                        interval_end=submission_block,
+                        weight_computer=validator.weight_computer,
+                    )
+                    print(f"score_totals: {score_totals}")
+                    if not score_totals:
+                        logger.info(
+                            "no valid miner hotkeys in epoch=%d; forcing burn fallback to UID0",
+                            current_weight_epoch,
+                        )
+                        frozen_epoch_weights = {}
+                    else:
+                        frozen_epoch_weights = validator.weight_computer.compute_weights_from_totals(dict(score_totals))
+                    current_interval_id = _current_interval_start(current_block)
+                    invalid_for_submission = set(
+                        await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
+                    )
+                    if invalid_for_submission:
+                        for hotkey in invalid_for_submission:
+                            if hotkey in frozen_epoch_weights:
+                                frozen_epoch_weights[hotkey] = 0.0
+                        frozen_epoch_weights = validator.weight_computer.normalize_weights(
+                            frozen_epoch_weights
+                        )
+                        logger.info(
+                            "zeroed invalid hotkeys before set_weights count=%d",
+                            len(invalid_for_submission),
+                        )
+                    logger.info(f"frozen_epoch_weights: {frozen_epoch_weights}")
                     submission = await submit_weights_to_chain_async(
                         netuid=settings.netuid,
                         network=settings.bt_network,

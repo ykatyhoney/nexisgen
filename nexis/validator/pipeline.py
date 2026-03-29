@@ -230,7 +230,6 @@ class ValidatorPipeline:
         interval_id: int,
         workdir: Path,
     ) -> tuple[LoadedMinerSubmission | None, ValidationDecision | None]:
-        store = self._store_for_hotkey(hotkey)
         key_base = f"{interval_id}"
         dataset_key = f"{key_base}/dataset.parquet"
         manifest_key = f"{key_base}/manifest.json"
@@ -238,6 +237,24 @@ class ValidatorPipeline:
         miner_dir.mkdir(parents=True, exist_ok=True)
         dataset_local = miner_dir / "dataset.parquet"
         manifest_local = miner_dir / "manifest.json"
+
+        try:
+            store = self._store_for_hotkey(hotkey)
+        except Exception as exc:
+            logger.warning(
+                "missing committed read credentials hotkey=%s interval=%d error=%s",
+                hotkey,
+                interval_id,
+                exc,
+            )
+            return None, ValidationDecision(
+                miner_hotkey=hotkey,
+                interval_id=interval_id,
+                accepted=False,
+                failures=["missing_committed_read_credentials"],
+                sampled_rows=0,
+                notes={"error": str(exc)},
+            )
 
         try:
             has_manifest = await store.download_file(manifest_key, manifest_local)

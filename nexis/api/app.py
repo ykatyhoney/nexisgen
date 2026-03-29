@@ -147,7 +147,7 @@ def create_app() -> FastAPI:
         repository=repository,
         network=settings.bt_network,
         window_blocks=25_000,
-        refresh_every_blocks=50,
+        refresh_every_blocks=30,
         poll_sec=settings.block_poll_sec,
     )
 
