@@ -121,9 +121,6 @@ Caption: {caption}
             choice = response.choices[0]
             message = getattr(choice, "message", None)
             output_text = getattr(message, "content", "") if message is not None else ""
-            print(f"================================================")
-            print(output_text)
-            print(f"================================================")
             return self._parse_match(str(output_text))
         except Exception:
             return None

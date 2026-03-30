@@ -88,15 +88,12 @@ class ValidationResultReporter:
 
         body = build_interval_payload(interval_id, decisions)
         endpoint = self._resolve_validation_results_url()
-        logger.error("reporting endpoint url=%s", endpoint)
         endpoint_path = self._endpoint_path(endpoint, default="/v1/validation-results")
-        logger.error("reporting endpoint path=%s", endpoint_path)
         headers = self._build_auth_headers(
             method="POST",
             path=endpoint_path,
             body=body,
         )
-        logger.error("reporting headers=%s", headers)
         headers["Content-Type"] = "application/json"
         try:
             status_code = await self._post_async(endpoint, body, headers)
