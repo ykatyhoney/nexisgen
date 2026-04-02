@@ -11,6 +11,9 @@ from ..models import ClipRecord
 import logging
 logger = logging.getLogger(__name__)
 
+_PROMPT_INJECTION_CAPTION_RE = re.compile(r"\b(?:match|true)\b", re.IGNORECASE)
+
+
 class CaptionSemanticChecker:
     """Optional semantic checker using OpenAI-compatible vision APIs.
 
@@ -70,6 +73,10 @@ class CaptionSemanticChecker:
         for row in sampled:
             if checked >= self._max_samples:
                 break
+            if self._contains_prompt_injection_terms(row.caption):
+                failures.append(f"caption_semantic_injection_keyword:{row.clip_id}")
+                checked += 1
+                continue
             frame_paths = [
                 path
                 for path in frame_paths_by_clip_id.get(row.clip_id, [])
@@ -86,6 +93,10 @@ class CaptionSemanticChecker:
                 failures.append(f"caption_semantic_mismatch:{row.clip_id}")
             checked += 1
         return failures
+
+    @staticmethod
+    def _contains_prompt_injection_terms(caption: str) -> bool:
+        return bool(_PROMPT_INJECTION_CAPTION_RE.search(caption))
 
     def _judge_match(self, *, client: object, caption: str, frame_paths: list[Path]) -> bool | None:
         prompt = f"""
