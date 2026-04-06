@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import inspect
 from typing import Any, AsyncIterator
+import bittensor as bt
 
 
 async def _resolve_maybe_awaitable(value: Any) -> Any:
@@ -15,7 +16,6 @@ async def _resolve_maybe_awaitable(value: Any) -> Any:
 
 
 def _build_subtensor(network: str) -> Any:
-    import bittensor as bt
 
     factory = getattr(bt, "AsyncSubtensor", None)
     if factory is None:

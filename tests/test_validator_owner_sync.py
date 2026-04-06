@@ -294,8 +294,17 @@ def test_owner_sync_worker_copies_assets_to_owner_bucket(tmp_path: Path) -> None
 
     run_async(run_sync())
 
-    expected_prefix = tmp_path / "owner-db" / "92/miner1"
-    assert (expected_prefix / "dataset.parquet").exists()
-    assert (expected_prefix / "manifest.json").exists()
-    assert (expected_prefix / "clips/c1.mp4").exists()
-    assert (expected_prefix / "frames/c1.jpg").exists()
+    nature_root = tmp_path / "owner-db" / "nature"
+    assert nature_root.exists()
+    sample_dirs = [entry for entry in nature_root.iterdir() if entry.is_dir()]
+    assert len(sample_dirs) == 1
+    sample_dir = sample_dirs[0]
+    assert (sample_dir / "clip.mp4").exists()
+    assert (sample_dir / "first_image.jpg").exists()
+    metadata_path = sample_dir / "metadata.json"
+    assert metadata_path.exists()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["source_id"] == "bQO8kMZwWuQ"
+    assert metadata["source_url"] == "https://www.youtube.com/watch?v=bQO8kMZwWuQ"
+    assert metadata["first_image_position"] == 0.0
+    assert metadata["caption"] == "A moving object."

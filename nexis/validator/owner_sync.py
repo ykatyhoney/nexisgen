@@ -10,6 +10,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 from ..hash_utils import sha256_file
 from ..models import ClipRecord, ValidationDecision
@@ -24,6 +25,7 @@ from ..specs import DatasetSpecRegistry
 from .pipeline import ValidatorPipeline
 
 logger = logging.getLogger(__name__)
+_OWNER_DATASET_ROOT_PREFIX = "nature"
 
 
 def _run_async(coro: Any) -> Any:
@@ -371,9 +373,10 @@ async def _copy_metadata_bundle_to_owner_bucket(
         if not records:
             return False
         source_store = source_store_for_hotkey(hotkey)
-        publishable_rows: list[ClipRecord] = []
+        copied_any = False
         for row in records:
-            pending_assets: list[tuple[str, Path]] = []
+            clip_local: Path | None = None
+            first_image_local: Path | None = None
             row_asset_missing = False
             for relative_uri in (row.clip_uri, row.first_frame_uri):
                 safe_uri = normalize_relative_uri(relative_uri)
@@ -390,36 +393,46 @@ async def _copy_metadata_bundle_to_owner_bucket(
                 if sha256_file(local_asset) != expected_sha:
                     row_asset_missing = True
                     break
-                pending_assets.append((safe_uri, local_asset))
-            if row_asset_missing:
+                if relative_uri == row.clip_uri:
+                    clip_local = local_asset
+                else:
+                    first_image_local = local_asset
+            if row_asset_missing or clip_local is None or first_image_local is None:
                 continue
-            for safe_uri, local_asset in pending_assets:
-                await owner_store.upload_file(
-                    f"{key_prefix}/{safe_uri}",
-                    local_asset,
-                    use_write=True,
-                )
-            publishable_rows.append(row)
-        if not publishable_rows:
-            return False
-        dataset_path = base_dir / "owner-dataset.parquet"
-        manifest_path = base_dir / "owner-manifest.json"
-        write_dataset_parquet(publishable_rows, dataset_path)
-        published_manifest = manifest.model_copy(deep=True)
-        published_manifest.record_count = len(publishable_rows)
-        published_manifest.dataset_sha256 = sha256_file(dataset_path)
-        write_manifest(published_manifest, manifest_path)
-        await owner_store.upload_file(
-            f"{key_prefix}/dataset.parquet",
-            dataset_path,
-            use_write=True,
-        )
-        await owner_store.upload_file(
-            f"{key_prefix}/manifest.json",
-            manifest_path,
-            use_write=True,
-        )
-        return True
+            sample_id = str(uuid4())
+            sample_prefix = f"{_OWNER_DATASET_ROOT_PREFIX}/{sample_id}"
+            await owner_store.upload_file(
+                f"{sample_prefix}/clip.mp4",
+                clip_local,
+                use_write=True,
+            )
+            await owner_store.upload_file(
+                f"{sample_prefix}/first_image.jpg",
+                first_image_local,
+                use_write=True,
+            )
+            metadata_local = base_dir / "metadata" / f"{sample_id}.json"
+            metadata_local.parent.mkdir(parents=True, exist_ok=True)
+            metadata_local.write_text(
+                json.dumps(
+                    {
+                        "source_id": row.source_video_id,
+                        "source_url": row.source_video_url,
+                        "first_image_position": round(float(row.clip_start_sec), 3),
+                        "caption": row.caption,
+                    },
+                    indent=2,
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+            await owner_store.upload_file(
+                f"{sample_prefix}/metadata.json",
+                metadata_local,
+                use_write=True,
+            )
+            copied_any = True
+        return copied_any
     except Exception as exc:
         logger.warning(
             "owner sync worker failed interval=%d hotkey=%s error=%s",

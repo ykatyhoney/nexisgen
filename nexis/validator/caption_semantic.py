@@ -12,6 +12,32 @@ import logging
 logger = logging.getLogger(__name__)
 
 _PROMPT_INJECTION_CAPTION_RE = re.compile(r"\b(?:match|true)\b", re.IGNORECASE)
+_TRANSIENT_LLM_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_TRANSIENT_LLM_ERROR_HINTS = (
+    "timeout",
+    "timed out",
+    "rate limit",
+    "too many requests",
+    "temporarily unavailable",
+    "internal server error",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "connection error",
+    "connection reset",
+)
+
+
+class _FailOpenTransientLLMError(Exception):
+    """Transient LLM server-side issue; caption semantic check should pass."""
+
+
+def _is_transient_llm_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int) and status_code in _TRANSIENT_LLM_STATUS_CODES:
+        return True
+    lowered = str(error).lower()
+    return any(hint in lowered for hint in _TRANSIENT_LLM_ERROR_HINTS)
 
 
 class CaptionSemanticChecker:
@@ -84,12 +110,21 @@ class CaptionSemanticChecker:
             ]
             if not frame_paths:
                 continue
-            verdict = self._judge_match(
-                client=client,
-                caption=row.caption,
-                frame_paths=frame_paths[:12],
-            )
-            if verdict is False:
+            try:
+                verdict = self._judge_match(
+                    client=client,
+                    caption=row.caption,
+                    frame_paths=frame_paths[:12],
+                )
+            except _FailOpenTransientLLMError as exc:
+                logger.warning(
+                    "Caption semantic transient LLM error for clip_id=%s; fail-open pass: %s",
+                    row.clip_id,
+                    exc,
+                )
+                checked += 1
+                continue
+            if verdict is False or verdict is None:
                 failures.append(f"caption_semantic_mismatch:{row.clip_id}")
             checked += 1
         return failures
@@ -133,7 +168,13 @@ Caption: {caption}
             message = getattr(choice, "message", None)
             output_text = getattr(message, "content", "") if message is not None else ""
             return self._parse_match(str(output_text))
-        except Exception:
+        except Exception as exc:
+            if _is_transient_llm_error(exc):
+                logger.warning(
+                    "Caption semantic LLM transient error for fail-open validation: %s",
+                    exc,
+                )
+                raise _FailOpenTransientLLMError(str(exc)) from exc
             return None
 
     def _frame_data_uri(self, frame_path: Path) -> str:

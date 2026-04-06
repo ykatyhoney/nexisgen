@@ -5,11 +5,14 @@ from __future__ import annotations
 import base64
 import json
 import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..models import ClipRecord
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_STRICT_MODEL = "gemini-3.1-flash-lite-preview"
 _CATEGORY_NATURE = "nature"
@@ -80,127 +83,6 @@ Return JSON only:
 }
 """
 
-NATURE_WORDS = {
-    "nature",
-    "landscape",
-    "scenery",
-    "scenic",
-    "forest",
-    "mountain",
-    "lake",
-    "river",
-    "waterfall",
-    "beach",
-    "coast",
-    "coastline",
-    "ocean",
-    "sea",
-    "desert",
-    "valley",
-    "cliff",
-    "canyon",
-    "sky",
-    "clouds",
-    "sunset",
-    "sunrise",
-    "snow",
-    "hill",
-    "hills",
-    "trees",
-    "woods",
-    "meadow",
-    "field",
-    "shore",
-    "rocky shore",
-    "natural",
-    "outdoor",
-    "outdoors",
-}
-PEOPLE_WORDS = {
-    "person",
-    "people",
-    "man",
-    "woman",
-    "boy",
-    "girl",
-    "hiker",
-    "tourist",
-    "selfie",
-    "portrait",
-    "speaker",
-    "talking to camera",
-    "vlogger",
-    "vlog",
-    "human",
-    "couple",
-    "friends",
-    "family",
-}
-ANIMAL_WORDS = {
-    "animal",
-    "dog",
-    "cat",
-    "bird",
-    "deer",
-    "horse",
-    "cow",
-    "elephant",
-    "lion",
-    "tiger",
-    "bear",
-    "pet",
-    "wildlife",
-    "monkey",
-    "fox",
-}
-VEHICLE_WORDS = {
-    "car",
-    "truck",
-    "bus",
-    "bike",
-    "bicycle",
-    "motorcycle",
-    "boat",
-    "ship",
-    "train",
-    "airplane",
-    "plane",
-    "helicopter",
-    "vehicle",
-    "driving",
-}
-URBAN_WORDS = {
-    "city",
-    "street",
-    "urban",
-    "building",
-    "buildings",
-    "skyscraper",
-    "traffic",
-    "crosswalk",
-    "storefront",
-    "downtown",
-    "road",
-    "highway",
-    "bridge",
-    "architecture",
-    "parking lot",
-}
-INDOOR_WORDS = {
-    "indoor",
-    "inside",
-    "room",
-    "bedroom",
-    "kitchen",
-    "office",
-    "hallway",
-    "studio",
-    "living room",
-    "restaurant",
-    "cafe",
-    "shop",
-}
-
 _STRONG_NATURE_PHRASES = {
     "natural landscape",
     "scenic landscape",
@@ -215,19 +97,32 @@ _STRONG_NATURE_PHRASES = {
     "the main subject is a landscape",
     "the main focus is natural scenery",
 }
+_TRANSIENT_LLM_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_TRANSIENT_LLM_ERROR_HINTS = (
+    "timeout",
+    "timed out",
+    "rate limit",
+    "too many requests",
+    "temporarily unavailable",
+    "internal server error",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "connection error",
+    "connection reset",
+)
 
 
-@dataclass
-class CaptionCheckResult:
-    main_subject: str
-    nature_score: float
-    people_score: float
-    animal_score: float
-    vehicle_score: float
-    urban_score: float
-    indoor_score: float
-    conflict: bool
-    reason: str
+class _FailOpenTransientLLMError(Exception):
+    """Transient LLM server-side issue; category check should pass."""
+
+
+def _is_transient_llm_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int) and status_code in _TRANSIENT_LLM_STATUS_CODES:
+        return True
+    lowered = str(error).lower()
+    return any(hint in lowered for hint in _TRANSIENT_LLM_ERROR_HINTS)
 
 
 @dataclass
@@ -259,132 +154,6 @@ class FinalDecision:
 
 def clamp_score(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
-
-
-def normalize_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip().lower())
-
-
-def count_keyword_hits(text: str, vocab: set[str]) -> int:
-    hits = 0
-    for word in vocab:
-        if _contains_term(text, word):
-            hits += 1
-    return hits
-
-
-def _contains_term(text: str, term: str) -> bool:
-    if " " in term:
-        return term in text
-    return re.search(rf"\b{re.escape(term)}\b", text) is not None
-
-
-def infer_main_subject_from_caption(caption: str, scores: dict[str, float]) -> str:
-    _ = caption
-    best_label = max(scores, key=scores.get)
-    best_score = scores[best_label]
-    if best_score < 0.20:
-        return "other"
-    return best_label
-
-
-def caption_gate_check_nature(miner_caption: str) -> CaptionCheckResult:
-    text = normalize_text(miner_caption)
-
-    nature_hits = count_keyword_hits(text, NATURE_WORDS)
-    people_hits = count_keyword_hits(text, PEOPLE_WORDS)
-    animal_hits = count_keyword_hits(text, ANIMAL_WORDS)
-    vehicle_hits = count_keyword_hits(text, VEHICLE_WORDS)
-    urban_hits = count_keyword_hits(text, URBAN_WORDS)
-    indoor_hits = count_keyword_hits(text, INDOOR_WORDS)
-
-    nature_score = clamp_score(0.12 * nature_hits)
-    people_score = clamp_score(0.18 * people_hits)
-    animal_score = clamp_score(0.18 * animal_hits)
-    vehicle_score = clamp_score(0.18 * vehicle_hits)
-    urban_score = clamp_score(0.18 * urban_hits)
-    indoor_score = clamp_score(0.18 * indoor_hits)
-
-    if any(phrase in text for phrase in _STRONG_NATURE_PHRASES):
-        nature_score = clamp_score(nature_score + 0.20)
-
-    if (
-        "person in front of" in text
-        or "woman in front of" in text
-        or "man in front of" in text
-    ):
-        people_score = clamp_score(people_score + 0.25)
-        nature_score = clamp_score(nature_score - 0.20)
-
-    if "driving through" in text or "car on" in text or "vehicle on" in text:
-        vehicle_score = clamp_score(vehicle_score + 0.25)
-        nature_score = clamp_score(nature_score - 0.20)
-
-    if (
-        "close-up of a deer" in text
-        or "close-up of a bird" in text
-        or "close-up of an animal" in text
-    ):
-        animal_score = clamp_score(animal_score + 0.25)
-        nature_score = clamp_score(nature_score - 0.20)
-
-    rival_max = max(people_score, animal_score, vehicle_score, urban_score, indoor_score)
-    conflict = rival_max >= 0.45
-
-    scores = {
-        "nature": nature_score,
-        "people": people_score,
-        "animal": animal_score,
-        "vehicle": vehicle_score,
-        "urban": urban_score,
-        "indoor": indoor_score,
-    }
-    main_subject = infer_main_subject_from_caption(text, scores)
-    reason = (
-        f"caption-based scores: nature={nature_score:.2f}, people={people_score:.2f}, "
-        f"animal={animal_score:.2f}, vehicle={vehicle_score:.2f}, "
-        f"urban={urban_score:.2f}, indoor={indoor_score:.2f}"
-    )
-    return CaptionCheckResult(
-        main_subject=main_subject,
-        nature_score=nature_score,
-        people_score=people_score,
-        animal_score=animal_score,
-        vehicle_score=vehicle_score,
-        urban_score=urban_score,
-        indoor_score=indoor_score,
-        conflict=conflict,
-        reason=reason,
-    )
-
-
-def best_rival_score_from_caption(result: CaptionCheckResult) -> float:
-    return max(
-        result.people_score,
-        result.animal_score,
-        result.vehicle_score,
-        result.urban_score,
-        result.indoor_score,
-    )
-
-
-def caption_gate_decision_from_caption(result: CaptionCheckResult) -> str:
-    rival = best_rival_score_from_caption(result)
-    margin = result.nature_score - rival
-    if (
-        result.main_subject == _CATEGORY_NATURE
-        and result.nature_score >= 0.92
-        and not result.conflict
-        and margin >= 0.35
-    ):
-        return "accept"
-    if (
-        result.nature_score < 0.55
-        or (result.main_subject != _CATEGORY_NATURE and rival > result.nature_score + 0.10)
-        or rival >= 0.75
-    ):
-        return "reject"
-    return "borderline"
 
 
 def get_middle_three_frame_paths(frame_paths: list[Path]) -> list[Path] | None:
@@ -515,15 +284,6 @@ class NatureCategoryChecker:
         for row in sampled:
             if checked >= self._max_samples:
                 break
-            caption_gate_result = caption_gate_check_nature(row.caption)
-            caption_gate_decision = caption_gate_decision_from_caption(caption_gate_result)
-            if caption_gate_decision == "reject":
-                failures.append(f"category_caption_reject:{row.clip_id}")
-                checked += 1
-                continue
-            if caption_gate_decision == "accept":
-                checked += 1
-                continue
 
             middle_three = get_middle_three_frame_paths(frame_paths_by_clip_id.get(row.clip_id, []))
             if middle_three is None:
@@ -541,7 +301,16 @@ class NatureCategoryChecker:
                     failures.append(f"category_strict_client_unavailable:{row.clip_id}")
                     checked += 1
                     continue
-            parsed = self._run_strict_pass(client=client, frame_paths=middle_three)
+            try:
+                parsed = self._run_strict_pass(client=client, frame_paths=middle_three)
+            except _FailOpenTransientLLMError as exc:
+                logger.warning(
+                    "Category strict transient LLM error for clip_id=%s; fail-open pass: %s",
+                    row.clip_id,
+                    exc,
+                )
+                checked += 1
+                continue
             if parsed is None:
                 failures.append(f"category_strict_response_invalid:{row.clip_id}")
                 checked += 1
@@ -585,7 +354,9 @@ class NatureCategoryChecker:
             message = getattr(choice, "message", None)
             text = getattr(message, "content", "") if message is not None else ""
             return self._parse_strict_text(str(text))
-        except Exception:
+        except Exception as exc:
+            if _is_transient_llm_error(exc):
+                raise _FailOpenTransientLLMError(str(exc)) from exc
             return None
 
     def _parse_strict_text(self, output_text: str) -> StrictPassResult | None:

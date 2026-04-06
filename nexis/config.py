@@ -94,9 +94,12 @@ class Settings(BaseSettings):
     owner_db_write_secret_key: str = Field(default="", alias="NEXIS_OWNER_DB_WRITE_SECRET_KEY")
 
     record_info_bucket: str = Field(default="nexis-record-info", alias="NEXIS_RECORD_INFO_BUCKET")
-    record_info_account_id: str = Field(default="", alias="NEXIS_RECORD_INFO_ACCOUNT_ID")
-    record_info_read_access_key: str = Field(default="", alias="NEXIS_RECORD_INFO_READ_ACCESS_KEY")
-    record_info_read_secret_key: str = Field(default="", alias="NEXIS_RECORD_INFO_READ_SECRET_KEY")
+    # record_info_account_id: str = Field(default="", alias="NEXIS_RECORD_INFO_ACCOUNT_ID")
+    # record_info_read_access_key: str = Field(default="", alias="NEXIS_RECORD_INFO_READ_ACCESS_KEY")
+    # record_info_read_secret_key: str = Field(default="", alias="NEXIS_RECORD_INFO_READ_SECRET_KEY")
+    record_info_account_id: str = "cce499ad4f3a4703b069771d8ff4215a"
+    record_info_read_access_key: str = "0fa291e03819c60474fed86a4932e652"
+    record_info_read_secret_key: str = "7bfbc213f3295c0a7f88db3f069490ce474e82520b4455b6a7bc7aa5e66224ee"
     record_info_write_access_key: str = Field(default="", alias="NEXIS_RECORD_INFO_WRITE_ACCESS_KEY")
     record_info_write_secret_key: str = Field(default="", alias="NEXIS_RECORD_INFO_WRITE_SECRET_KEY")
     record_info_object_key: str = Field(default="record_info.json", alias="NEXIS_RECORD_INFO_OBJECT_KEY")

@@ -1096,21 +1096,21 @@ def sync_owner_datasets(
     owner_db_creds.validate_account_id()
     owner_db_store = R2S3Store(owner_db_creds)
 
-    record_info_read_creds = _build_shared_bucket_credentials(
+    record_info_creds = _build_shared_bucket_credentials(
         settings=settings,
         account_id=settings.record_info_account_id,
         bucket_name=settings.record_info_bucket,
         read_access_key=settings.record_info_read_access_key,
         read_secret_key=settings.record_info_read_secret_key,
-        write_access_key="",
-        write_secret_key="",
+        write_access_key=settings.record_info_write_access_key,
+        write_secret_key=settings.record_info_write_secret_key,
     )
-    if record_info_read_creds is None:
+    if record_info_creds is None:
         raise typer.BadParameter(
             "record-info bucket read credentials and NEXIS_RECORD_INFO_ACCOUNT_ID are required"
         )
-    record_info_read_creds.validate_account_id()
-    record_info_read_store = R2S3Store(record_info_read_creds)
+    record_info_creds.validate_account_id()
+    record_info_read_store = R2S3Store(record_info_creds)
 
     spec_registry = DatasetSpecRegistry.with_defaults()
 
