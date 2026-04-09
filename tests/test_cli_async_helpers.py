@@ -271,7 +271,7 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
 
     assert len(submit_calls) == 1
     assert submit_calls[0]["subtensor"] is fake_subtensor
-    assert submit_calls[0]["weights_by_hotkey"] == {"hk1": 0.0, "hk2": 0.0}
+    assert submit_calls[0]["weights_by_hotkey"] == {}
     assert submit_calls[0]["netuid"] == 9
 
 

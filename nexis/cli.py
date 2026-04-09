@@ -1359,8 +1359,30 @@ async def _run_validator_loop(
                     decisions: list[dict[str, Any]] = [
                         row for row in decisions_raw if isinstance(row, dict)
                     ]
+                    current_interval_id = _current_interval_start(current_block)
+                    invalid_for_submission: set[str] = set()
+                    if reporter is not None:
+                        invalid_for_submission = set(
+                            await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
+                        )
+                        invalid_for_submission |= {
+                            value.strip()
+                            for value in await reporter.fetch_blacklist_hotkeys()
+                            if value.strip()
+                        }
+                    filtered_decisions = decisions
+                    if invalid_for_submission:
+                        filtered_decisions = [
+                            row
+                            for row in decisions
+                            if str(row.get("miner_hotkey", "")).strip() not in invalid_for_submission
+                        ]
+                        logger.info(
+                            "excluded hotkeys before rank scoring count=%d",
+                            len(invalid_for_submission),
+                        )
                     score_totals = compute_score_totals_from_decisions(
-                        decisions=decisions,
+                        decisions=filtered_decisions,
                         interval_start=submission_block - 1500 - INTERVAL_LENGTH_BLOCKS,
                         interval_end=submission_block,
                         weight_computer=validator.weight_computer,
@@ -1373,28 +1395,6 @@ async def _run_validator_loop(
                         frozen_epoch_weights = {}
                     else:
                         frozen_epoch_weights = validator.weight_computer.compute_weights_from_totals(dict(score_totals))
-                    current_interval_id = _current_interval_start(current_block)
-                    invalid_for_submission: set[str] = set()
-                    if reporter is not None:
-                        invalid_for_submission = set(
-                            await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
-                        )
-                        invalid_for_submission |= {
-                            value.strip()
-                            for value in await reporter.fetch_blacklist_hotkeys()
-                            if value.strip()
-                        }
-                    if invalid_for_submission:
-                        for hotkey in invalid_for_submission:
-                            if hotkey in frozen_epoch_weights:
-                                frozen_epoch_weights[hotkey] = 0.0
-                        frozen_epoch_weights = validator.weight_computer.normalize_weights(
-                            frozen_epoch_weights
-                        )
-                        logger.info(
-                            "zeroed excluded hotkeys before set_weights count=%d",
-                            len(invalid_for_submission),
-                        )
                     logger.info("frozen_epoch_weights: %s", frozen_epoch_weights)
 
                     submission = await submit_weights_to_chain_async(
