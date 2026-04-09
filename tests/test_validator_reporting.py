@@ -116,6 +116,42 @@ def test_fetch_invalid_hotkeys(monkeypatch) -> None:  # type: ignore[no-untyped-
     assert hotkeys == ["hk1", "hk2"]
 
 
+def test_fetch_blacklist_hotkeys(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    reporter = ValidationResultReporter(
+        endpoint_url="http://127.0.0.1:8080/v1/validation-results",
+        hotkey_ss58="validator-hotkey",
+        hotkey_signer=_Signer(),
+        timeout_sec=2.0,
+    )
+
+    async def fake_get_async(url: str, headers: dict[str, str]) -> tuple[int, bytes]:
+        _ = headers
+        assert url.endswith("/v1/get_blacklist")
+        return 200, b'{"blacklist_hotkeys":["hk1","hk2","hk1"]}'
+
+    monkeypatch.setattr(reporter, "_get_async", fake_get_async)
+    hotkeys = run_async(reporter.fetch_blacklist_hotkeys())
+    assert hotkeys == ["hk1", "hk2"]
+
+
+def test_fetch_blacklist_hotkeys_fail_open(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    reporter = ValidationResultReporter(
+        endpoint_url="http://127.0.0.1:8080/v1/validation-results",
+        hotkey_ss58="validator-hotkey",
+        hotkey_signer=_Signer(),
+        timeout_sec=2.0,
+    )
+
+    async def fake_get_async(url: str, headers: dict[str, str]) -> tuple[int, bytes]:
+        _ = headers
+        _ = url
+        return 503, b"{}"
+
+    monkeypatch.setattr(reporter, "_get_async", fake_get_async)
+    hotkeys = run_async(reporter.fetch_blacklist_hotkeys())
+    assert hotkeys == []
+
+
 def test_post_invalid_hotkeys_signs_request(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     signer = _Signer()
     reporter = ValidationResultReporter(

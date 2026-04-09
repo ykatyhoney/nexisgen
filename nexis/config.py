@@ -39,10 +39,6 @@ class Settings(BaseSettings):
         default="video_v1",
         alias="NEXIS_VALIDATOR_ENABLED_SPECS",
     )
-    validator_blacklist_file: Path = Field(
-        default=Path("validator_blacklist_hotkeys.txt"),
-        alias="NEXIS_VALIDATOR_BLACKLIST_FILE",
-    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")

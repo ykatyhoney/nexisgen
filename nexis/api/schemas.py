@@ -89,6 +89,10 @@ class InvalidHotkeysWindowResponse(BaseModel):
     invalid_hotkeys: list[str] = Field(default_factory=list)
 
 
+class BlacklistResponse(BaseModel):
+    blacklist_hotkeys: list[str] = Field(default_factory=list)
+
+
 class InvalidHotkeysIngestRequest(BaseModel):
     interval_id: int = Field(ge=0)
     invalid_hotkeys: list[str] = Field(default_factory=list)

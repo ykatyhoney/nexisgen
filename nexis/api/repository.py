@@ -72,6 +72,15 @@ class ValidationEvidenceRepository:
             )
             """
         )
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blacklisted_hotkeys (
+                hotkey TEXT PRIMARY KEY,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
 
     async def register_nonce_once(
         self,
@@ -244,6 +253,21 @@ class ValidationEvidenceRepository:
                 if hotkey:
                     merged.add(hotkey)
         return sorted(merged)
+
+    async def get_blacklisted_hotkeys(self) -> list[str]:
+        rows = await self._db.fetch(
+            """
+            SELECT hotkey
+            FROM blacklisted_hotkeys
+            ORDER BY hotkey ASC
+            """
+        )
+        values: list[str] = []
+        for row in rows:
+            hotkey = str(row["hotkey"]).strip()
+            if hotkey:
+                values.append(hotkey)
+        return values
 
     async def get_interval_decisions(
         self,

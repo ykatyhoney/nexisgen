@@ -24,6 +24,7 @@ class _FakeRepository:
     def __init__(self, _db: _FakeDatabase):
         self._rows: dict[tuple[str, int, str], dict[str, Any]] = {}
         self._invalid_by_interval: dict[int, set[str]] = {}
+        self._blacklist_hotkeys: set[str] = {"miner-z", "miner-a"}
 
     async def ensure_schema(self) -> None:
         return None
@@ -133,6 +134,9 @@ class _FakeRepository:
         )
         return rows
 
+    async def get_blacklisted_hotkeys(self) -> list[str]:
+        return sorted(self._blacklist_hotkeys)
+
 
 class _FakeAllowlistSync:
     def __init__(self, **_kwargs: Any):
@@ -164,11 +168,18 @@ class _FakeAuthenticator:
         )
 
 
+async def _fake_current_block_static(*, network: str, subtensor=None) -> int:  # type: ignore[no-untyped-def]
+    _ = network
+    _ = subtensor
+    return 25000
+
+
 def test_api_post_and_get_roundtrip_and_upsert(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr("nexis.api.app.Database", _FakeDatabase)
     monkeypatch.setattr("nexis.api.app.ValidationEvidenceRepository", _FakeRepository)
     monkeypatch.setattr("nexis.api.app.MetagraphAllowlistSync", _FakeAllowlistSync)
     monkeypatch.setattr("nexis.api.app.RequestAuthenticator", _FakeAuthenticator)
+    monkeypatch.setattr("nexis.api.app.fetch_current_block_async", _fake_current_block_static)
 
     app = create_app()
     with TestClient(app) as client:
@@ -292,6 +303,7 @@ def test_get_invalid_hotkeys_window_union(monkeypatch) -> None:  # type: ignore[
     monkeypatch.setattr("nexis.api.app.ValidationEvidenceRepository", _FakeRepository)
     monkeypatch.setattr("nexis.api.app.MetagraphAllowlistSync", _FakeAllowlistSync)
     monkeypatch.setattr("nexis.api.app.RequestAuthenticator", _FakeAuthenticator)
+    monkeypatch.setattr("nexis.api.app.fetch_current_block_async", _fake_current_block_static)
 
     app = create_app()
     with TestClient(app) as client:
@@ -336,11 +348,27 @@ def test_get_invalid_hotkeys_window_union(monkeypatch) -> None:  # type: ignore[
         assert payload["invalid_hotkeys"] == ["miner-a", "miner-b"]
 
 
+def test_get_blacklist_returns_sorted_hotkeys(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("nexis.api.app.Database", _FakeDatabase)
+    monkeypatch.setattr("nexis.api.app.ValidationEvidenceRepository", _FakeRepository)
+    monkeypatch.setattr("nexis.api.app.MetagraphAllowlistSync", _FakeAllowlistSync)
+    monkeypatch.setattr("nexis.api.app.RequestAuthenticator", _FakeAuthenticator)
+    monkeypatch.setattr("nexis.api.app.fetch_current_block_async", _fake_current_block_static)
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/v1/get_blacklist")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["blacklist_hotkeys"] == ["miner-a", "miner-z"]
+
+
 def test_post_invalid_hotkeys_requires_auth_and_merges(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr("nexis.api.app.Database", _FakeDatabase)
     monkeypatch.setattr("nexis.api.app.ValidationEvidenceRepository", _FakeRepository)
     monkeypatch.setattr("nexis.api.app.MetagraphAllowlistSync", _FakeAllowlistSync)
     monkeypatch.setattr("nexis.api.app.RequestAuthenticator", _FakeAuthenticator)
+    monkeypatch.setattr("nexis.api.app.fetch_current_block_async", _fake_current_block_static)
 
     app = create_app()
     with TestClient(app) as client:

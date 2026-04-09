@@ -17,6 +17,7 @@ from .db import Database
 from .metagraph_sync import MetagraphAllowlistSync, ValidatorAllowlistCache
 from .repository import ValidationEvidenceRepository
 from .schemas import (
+    BlacklistResponse,
     IngestResponse,
     InvalidHotkeysIngestRequest,
     InvalidHotkeysIngestResponse,
@@ -253,6 +254,11 @@ def create_app() -> FastAPI:
             interval_id=payload.interval_id,
             saved_count=len(deduped),
         )
+
+    @app.get("/v1/get_blacklist", response_model=BlacklistResponse)
+    async def get_blacklist() -> BlacklistResponse:
+        values = await repository.get_blacklisted_hotkeys()
+        return BlacklistResponse(blacklist_hotkeys=values)
 
     @app.get("/v1/get_latest_result", response_model=LatestResultResponse)
     @app.get("/get_latest_result", response_model=LatestResultResponse)

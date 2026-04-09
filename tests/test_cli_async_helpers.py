@@ -87,7 +87,6 @@ def test_resolve_llm_runtime_without_any_key() -> None:
 
 def test_fetch_hotkeys_with_commitments_filters_excluded_and_missing(
     monkeypatch,
-    tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     async def fake_fetch_hotkeys_from_metagraph_async(*, netuid: int, network: str, subtensor: object) -> list[str]:
         assert netuid == 9
@@ -106,9 +105,11 @@ def test_fetch_hotkeys_with_commitments_filters_excluded_and_missing(
     settings = Settings()
     settings.netuid = 9
     settings.bt_network = "test"
-    settings.validator_blacklist_file = tmp_path / "blacklist.txt"
-    settings.validator_blacklist_file.write_text("hk3\n", encoding="utf-8")
     fake_subtensor = object()
+
+    class FakeReporter:
+        async def fetch_blacklist_hotkeys(self) -> list[str]:
+            return ["hk3"]
 
     monkeypatch.setattr(
         "nexis.cli.fetch_hotkeys_from_metagraph_async",
@@ -119,9 +120,9 @@ def test_fetch_hotkeys_with_commitments_filters_excluded_and_missing(
         _fetch_hotkeys_with_commitments(
             settings=settings,
             manager=FakeManager(),  # type: ignore[arg-type]
-            blacklist_file=None,
             exclude_hotkeys="hk2",
             subtensor=fake_subtensor,
+            reporter=FakeReporter(),  # type: ignore[arg-type]
         )
     )
 
@@ -151,7 +152,7 @@ def test_load_record_info_snapshot_trust_flags(tmp_path) -> None:  # type: ignor
 
     missing, invalid = run_async(run())
     assert missing == ({}, True)
-    assert invalid == ({}, False)
+    assert invalid == ({}, True)
 
 
 def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
@@ -169,7 +170,7 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
     async def fake_fetch_current_block_async(*, network: str, subtensor: object | None = None) -> int:
         assert network == "test"
         assert subtensor is fake_subtensor
-        return 250
+        return 300
 
     async def fake_fetch_hotkeys_with_commitments(**kwargs) -> tuple[list[str], dict[str, dict]]:  # type: ignore[no-untyped-def]
         assert kwargs["subtensor"] is fake_subtensor
@@ -179,6 +180,28 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
         submit_calls.append(kwargs)
         return SimpleNamespace(submitted=True, reason="", unknown_hotkeys=[])
 
+    async def fake_fetch_latest_result_snapshot(*, url: str, timeout_sec: float) -> dict[str, object]:
+        _ = timeout_sec
+        assert "/v1/get_latest_result" in url
+        return {
+            "decisions": [
+                {
+                    "accepted": True,
+                    "miner_hotkey": "hk1",
+                    "validator_hotkey": "val-1",
+                    "interval_id": 0,
+                    "record_count": 3,
+                },
+                {
+                    "accepted": True,
+                    "miner_hotkey": "hk2",
+                    "validator_hotkey": "val-1",
+                    "interval_id": 0,
+                    "record_count": 1,
+                },
+            ]
+        }
+
     async def fake_sleep_poll(seconds: float) -> None:
         _ = seconds
         raise KeyboardInterrupt
@@ -187,6 +210,7 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
     monkeypatch.setattr("nexis.cli.fetch_current_block_async", fake_fetch_current_block_async)
     monkeypatch.setattr("nexis.cli._fetch_hotkeys_with_commitments", fake_fetch_hotkeys_with_commitments)
     monkeypatch.setattr("nexis.cli.submit_weights_to_chain_async", fake_submit_weights_to_chain_async)
+    monkeypatch.setattr("nexis.cli.fetch_latest_result_snapshot", fake_fetch_latest_result_snapshot)
     monkeypatch.setattr("nexis.cli._sleep_poll", fake_sleep_poll)
 
     class FakeWeightComputer:
@@ -196,12 +220,26 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
         def compute_weights_from_totals(self, score_totals: dict[str, float]) -> dict[str, float]:
             return dict(score_totals)
 
+        def normalize_weights(self, raw_scores: dict[str, float]) -> dict[str, float]:
+            total = sum(raw_scores.values())
+            if total <= 0:
+                return {hotkey: 0.0 for hotkey in raw_scores}
+            return {hotkey: score / total for hotkey, score in raw_scores.items()}
+
     class FakeValidator:
         weight_computer = FakeWeightComputer()
 
         async def validate_interval(self, **kwargs) -> tuple[list[object], dict[str, float]]:  # type: ignore[no-untyped-def]
             _ = kwargs
             raise AssertionError("validate_interval should not be called when no hotkeys")
+
+    class FakeReporter:
+        async def fetch_invalid_hotkeys(self, *, interval_id: int) -> list[str]:
+            _ = interval_id
+            return ["hk1"]
+
+        async def fetch_blacklist_hotkeys(self) -> list[str]:
+            return ["hk2"]
 
     settings = Settings()
     settings.netuid = 9
@@ -224,8 +262,8 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
                 record_info_read_store=None,
                 record_info_write_store=None,
                 store_for_hotkey=lambda _hotkey: LocalObjectStore(tmp_path / "unused"),  # type: ignore[return-value]
-                blacklist_file=None,
                 exclude_hotkeys="",
+                reporter=FakeReporter(),  # type: ignore[arg-type]
             )
         )
     except KeyboardInterrupt:
@@ -233,7 +271,7 @@ def test_run_validator_loop_submits_epoch_weights_with_shared_subtensor(
 
     assert len(submit_calls) == 1
     assert submit_calls[0]["subtensor"] is fake_subtensor
-    assert submit_calls[0]["weights_by_hotkey"] == {}
+    assert submit_calls[0]["weights_by_hotkey"] == {"hk1": 0.0, "hk2": 0.0}
     assert submit_calls[0]["netuid"] == 9
 
 
@@ -306,7 +344,7 @@ def test_run_validator_loop_reports_interval_results(monkeypatch, tmp_path) -> N
         assert network == "test"
         yield fake_subtensor
 
-    fetch_blocks = iter([52, 52])
+    fetch_blocks = iter([102, 102])
 
     async def fake_fetch_current_block_async(*, network: str, subtensor: object | None = None) -> int:
         assert network == "test"
@@ -356,6 +394,9 @@ def test_run_validator_loop_reports_interval_results(monkeypatch, tmp_path) -> N
             _ = interval_id
             return []
 
+        async def fetch_blacklist_hotkeys(self) -> list[str]:
+            return []
+
         async def report_interval(self, *, interval_id: int, decisions: list[ValidationDecision]) -> bool:
             reported.append((interval_id, len(decisions)))
             return True
@@ -381,7 +422,6 @@ def test_run_validator_loop_reports_interval_results(monkeypatch, tmp_path) -> N
                 record_info_read_store=None,
                 record_info_write_store=None,
                 store_for_hotkey=lambda _hotkey: LocalObjectStore(tmp_path / "unused"),  # type: ignore[return-value]
-                blacklist_file=None,
                 exclude_hotkeys="",
                 reporter=FakeReporter(),  # type: ignore[arg-type]
             )

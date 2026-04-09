@@ -144,6 +144,30 @@ class ValidationResultReporter:
             logger.warning("invalid hotkeys fetch failed interval=%d error=%s", interval_id, exc)
             return []
 
+    async def fetch_blacklist_hotkeys(self) -> list[str]:
+        endpoint = self._join_api_path("/v1/get_blacklist")
+        headers = {
+            "Accept": "application/json",
+        }
+        try:
+            status_code, body = await self._get_async(endpoint, headers)
+            if status_code < 200 or status_code >= 300:
+                logger.warning("blacklist hotkeys fetch failed status=%d", status_code)
+                return []
+            parsed = json.loads(body.decode("utf-8"))
+            values = parsed.get("blacklist_hotkeys", [])
+            if not isinstance(values, list):
+                return []
+            deduped: list[str] = []
+            for item in values:
+                hotkey = str(item).strip()
+                if hotkey and hotkey not in deduped:
+                    deduped.append(hotkey)
+            return deduped
+        except Exception as exc:
+            logger.warning("blacklist hotkeys fetch failed error=%s", exc)
+            return []
+
     async def post_invalid_hotkeys(self, *, interval_id: int, invalid_hotkeys: list[str]) -> bool:
         endpoint = self._join_api_path("/v1/invalid-hotkeys")
         body = json.dumps(

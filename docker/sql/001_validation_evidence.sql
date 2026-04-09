@@ -29,3 +29,9 @@ CREATE TABLE IF NOT EXISTS validator_request_nonces (
 CREATE INDEX IF NOT EXISTS idx_validator_request_nonces_received_at
     ON validator_request_nonces (received_at);
 
+CREATE TABLE IF NOT EXISTS blacklisted_hotkeys (
+    hotkey TEXT PRIMARY KEY,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+

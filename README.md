@@ -219,7 +219,7 @@ nexis validate --specs video_v1
 # enable debug output (recommended while tuning)
 nexis validate --debug
 
-# runtime hotkey exclusions (blacklist file is always enforced)
+# runtime hotkey exclusions (API blacklist is always enforced)
 nexis validate --exclude-hotkeys hotkey1,hotkey2
 
 # override polling interval

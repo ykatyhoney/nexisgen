@@ -45,7 +45,6 @@ docker inspect --format '{{index .RepoDigests 0}}' nexis-validator
 - `R2_REGION`
 - `NEXIS_BLOCK_POLL_SEC`
 - `NEXIS_WORKDIR`
-- `NEXIS_VALIDATOR_BLACKLIST_FILE`
 - `NEXIS_RECORD_INFO_BUCKET`
 - `NEXIS_RECORD_INFO_ACCOUNT_ID`
 - `NEXIS_RECORD_INFO_READ_ACCESS_KEY`
@@ -108,7 +107,7 @@ docker inspect --format '{{index .RepoDigests 0}}' nexis-validator
 - validates source authenticity and posts invalid hotkeys to API
 - anti-bot/download errors are fail-open (miner treated as valid for source-auth stage)
 
-The blacklist file is always applied. Stop with `Ctrl+C`.
+The API-backed blacklist is always applied. Stop with `Ctrl+C`.
 
 ## Category Failure Codes
 

@@ -257,19 +257,6 @@ def _resolve_hotkey_ss58_from_wallet(settings: Settings) -> str:
     )
 
 
-def _load_hotkeys_from_file(path: Path) -> set[str]:
-    if not path.exists():
-        logger.debug("hotkey file not found path=%s", path)
-        return set()
-    values: set[str] = set()
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        values.add(line)
-    return values
-
-
 def _parse_exclude_hotkeys(text: str) -> set[str]:
     if not text.strip():
         return set()
@@ -370,9 +357,9 @@ async def _fetch_hotkeys_with_commitments(
     *,
     settings: Settings,
     manager: "ReadCredentialCommitmentManager",
-    blacklist_file: Path | None,
     exclude_hotkeys: str,
     subtensor: object,
+    reporter: ValidationResultReporter | None = None,
 ) -> tuple[list[str], dict[str, dict]]:
     hotkeys = await fetch_hotkeys_from_metagraph_async(
         netuid=settings.netuid,
@@ -380,12 +367,15 @@ async def _fetch_hotkeys_with_commitments(
         subtensor=subtensor,
     )
     console.print(f"metagraph hotkeys discovered: {len(hotkeys)}")
-    active_blacklist_file = blacklist_file or settings.validator_blacklist_file
-    file_blacklist = _load_hotkeys_from_file(active_blacklist_file)
+    api_blacklist: set[str] = set()
+    if reporter is not None:
+        api_blacklist = {
+            value.strip() for value in await reporter.fetch_blacklist_hotkeys() if value.strip()
+        }
     runtime_excludes = _parse_exclude_hotkeys(exclude_hotkeys)
-    excluded = file_blacklist | runtime_excludes
-    if file_blacklist:
-        console.print(f"blacklist file exclusions loaded: {len(file_blacklist)}")
+    excluded = api_blacklist | runtime_excludes
+    if api_blacklist:
+        console.print(f"api blacklist exclusions loaded: {len(api_blacklist)}")
     if runtime_excludes:
         console.print(f"runtime exclusions loaded: {len(runtime_excludes)}")
 
@@ -703,11 +693,6 @@ async def _run_miner_loop(
 
 @app.command("validate")
 def validate(
-    blacklist_file: Path | None = typer.Option(
-        None,
-        "--blacklist-file",
-        help="Blacklist file path override (always enforced when present).",
-    ),
     exclude_hotkeys: str = typer.Option(
         "",
         "--exclude-hotkeys",
@@ -906,7 +891,6 @@ def validate(
                 record_info_read_store=record_info_read_store,
                 record_info_write_store=record_info_write_store,
                 store_for_hotkey=store_for_hotkey,
-                blacklist_file=blacklist_file,
                 exclude_hotkeys=exclude_hotkeys,
                 reporter=reporter,
             )
@@ -917,11 +901,6 @@ def validate(
 
 @app.command("validate-source-auth")
 def validate_source_auth(
-    blacklist_file: Path | None = typer.Option(
-        None,
-        "--blacklist-file",
-        help="Blacklist file path override (always enforced when present).",
-    ),
     exclude_hotkeys: str = typer.Option(
         "",
         "--exclude-hotkeys",
@@ -1036,7 +1015,6 @@ def validate_source_auth(
                 store_cache=store_cache,
                 committed_payload=committed_payload,
                 validator=validator,
-                blacklist_file=blacklist_file,
                 exclude_hotkeys=exclude_hotkeys,
                 reporter=reporter,
                 record_info_read_store=record_info_read_store,
@@ -1048,11 +1026,6 @@ def validate_source_auth(
 
 @app.command("sync-owner-datasets")
 def sync_owner_datasets(
-    blacklist_file: Path | None = typer.Option(
-        None,
-        "--blacklist-file",
-        help="Blacklist file path override (always enforced when present).",
-    ),
     exclude_hotkeys: str = typer.Option(
         "",
         "--exclude-hotkeys",
@@ -1138,7 +1111,6 @@ def sync_owner_datasets(
                 owner_db_store=owner_db_store,
                 record_info_read_store=record_info_read_store,
                 store_for_hotkey=store_for_hotkey,
-                blacklist_file=blacklist_file,
                 exclude_hotkeys=exclude_hotkeys,
                 spec_registry=spec_registry,
             )
@@ -1160,7 +1132,6 @@ async def _run_validator_loop(
     record_info_read_store: R2S3Store | None,
     record_info_write_store: R2S3Store | None,
     store_for_hotkey: Callable[[str], R2S3Store],
-    blacklist_file: Path | None,
     exclude_hotkeys: str,
     reporter: ValidationResultReporter | None = None,
 ) -> None:
@@ -1234,9 +1205,9 @@ async def _run_validator_loop(
                     hotkeys, payload = await _fetch_hotkeys_with_commitments(
                         settings=settings,
                         manager=manager,
-                        blacklist_file=blacklist_file,
                         exclude_hotkeys=exclude_hotkeys,
                         subtensor=subtensor,
+                        reporter=reporter,
                     )
                     committed_payload.clear()
                     committed_payload.update(payload)
@@ -1254,9 +1225,15 @@ async def _run_validator_loop(
                                         interval_id=next_interval_start
                                     )
                                 )
+                                blacklist_hotkeys_for_interval = {
+                                    value.strip()
+                                    for value in await reporter.fetch_blacklist_hotkeys()
+                                    if value.strip()
+                                }
+                                invalid_hotkeys_for_interval |= blacklist_hotkeys_for_interval
                                 if invalid_hotkeys_for_interval:
                                     logger.info(
-                                        "api invalid hotkeys interval=%s count=%d",
+                                        "api excluded hotkeys interval=%s count=%d",
                                         _interval_label(next_interval_start),
                                         len(invalid_hotkeys_for_interval),
                                     )
@@ -1402,6 +1379,11 @@ async def _run_validator_loop(
                         invalid_for_submission = set(
                             await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
                         )
+                        invalid_for_submission |= {
+                            value.strip()
+                            for value in await reporter.fetch_blacklist_hotkeys()
+                            if value.strip()
+                        }
                     if invalid_for_submission:
                         for hotkey in invalid_for_submission:
                             if hotkey in frozen_epoch_weights:
@@ -1410,7 +1392,7 @@ async def _run_validator_loop(
                             frozen_epoch_weights
                         )
                         logger.info(
-                            "zeroed invalid hotkeys before set_weights count=%d",
+                            "zeroed excluded hotkeys before set_weights count=%d",
                             len(invalid_for_submission),
                         )
                     logger.info("frozen_epoch_weights: %s", frozen_epoch_weights)
@@ -1473,7 +1455,6 @@ async def _run_source_auth_validator_loop(
     store_cache: dict[str, R2S3Store],
     committed_payload: dict[str, dict],
     validator: ValidatorPipeline,
-    blacklist_file: Path | None,
     exclude_hotkeys: str,
     reporter: ValidationResultReporter,
     record_info_read_store: R2S3Store | None,
@@ -1516,9 +1497,9 @@ async def _run_source_auth_validator_loop(
                     hotkeys, payload = await _fetch_hotkeys_with_commitments(
                         settings=settings,
                         manager=manager,
-                        blacklist_file=blacklist_file,
                         exclude_hotkeys=exclude_hotkeys,
                         subtensor=subtensor,
+                        reporter=reporter,
                     )
                     committed_payload.clear()
                     committed_payload.update(payload)
@@ -1527,6 +1508,11 @@ async def _run_source_auth_validator_loop(
                             invalid_hotkeys_for_interval = set(
                                 await reporter.fetch_invalid_hotkeys(interval_id=next_interval_start)
                             )
+                            invalid_hotkeys_for_interval |= {
+                                value.strip()
+                                for value in await reporter.fetch_blacklist_hotkeys()
+                                if value.strip()
+                            }
                             global_record_index, _record_info_loaded = await _load_record_info_snapshot(
                                 record_info_store=record_info_read_store,
                                 object_key=settings.record_info_object_key,
@@ -1576,7 +1562,6 @@ async def _run_owner_sync_worker_loop(
     owner_db_store: R2S3Store,
     record_info_read_store: R2S3Store,
     store_for_hotkey: Callable[[str], R2S3Store],
-    blacklist_file: Path | None,
     exclude_hotkeys: str,
     spec_registry: DatasetSpecRegistry,
 ) -> None:
@@ -1588,9 +1573,9 @@ async def _run_owner_sync_worker_loop(
                 _hotkeys, payload = await _fetch_hotkeys_with_commitments(
                     settings=settings,
                     manager=manager,
-                    blacklist_file=blacklist_file,
                     exclude_hotkeys=exclude_hotkeys,
                     subtensor=subtensor,
+                    reporter=None,
                 )
                 committed_payload.clear()
                 committed_payload.update(payload)

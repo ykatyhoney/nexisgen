@@ -15,4 +15,3 @@ __pycache__
 *.tmp
 tests
 docs
-validator_blacklist_hotkeys.txt

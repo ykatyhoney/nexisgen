@@ -19,7 +19,6 @@ services:
     volumes:
       - ${NEXIS_WORKDIR_HOST_PATH:-./data/nexis}:/var/lib/nexis
       - ${BT_WALLET_HOST_PATH:?BT_WALLET_HOST_PATH is required}:/root/.bittensor/wallets:ro
-      - ${VALIDATOR_BLACKLIST_HOST_PATH:-../validator_blacklist_hotkeys.txt}:/config/validator_blacklist_hotkeys.txt:ro
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
