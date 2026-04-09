@@ -25,12 +25,21 @@ def select_miners(active_hotkeys: list[str], interval_seed: str) -> list[str]:
     return ranked[:k]
 
 
-def select_row_indices(total_rows: int, hotkey: str, interval_seed: str) -> list[int]:
+def select_row_indices(
+    total_rows: int,
+    hotkey: str,
+    interval_seed: str,
+    validator_hotkey: str | None = None,
+) -> list[int]:
     if total_rows <= ROW_SAMPLE_ALL_THRESHOLD:
         return list(range(total_rows))
     k = max(1, int(math.ceil(total_rows * ROW_SAMPLE_RATE)))
     k = min(k, ROW_SAMPLE_MAX, total_rows)
-    rng = random.Random(_seed_int(f"{hotkey}:{interval_seed}:{total_rows}"))
+    if validator_hotkey:
+        seed_text = f"{hotkey}:{validator_hotkey}:{interval_seed}:{total_rows}"
+    else:
+        seed_text = f"{hotkey}:{interval_seed}:{total_rows}"
+    rng = random.Random(_seed_int(seed_text))
     population = list(range(total_rows))
     rng.shuffle(population)
     return sorted(population[:k])

@@ -20,3 +20,18 @@ def test_deterministic_row_sampling() -> None:
     assert a == b
     assert len(a) <= 3
 
+
+def test_row_sampling_uses_validator_hotkey() -> None:
+    rows = 100
+    miner_hotkey = "miner1"
+    seed = "seed2"
+    validator_a = "validatorA"
+    validator_b = "validatorB"
+
+    a1 = select_row_indices(rows, miner_hotkey, seed, validator_a)
+    a2 = select_row_indices(rows, miner_hotkey, seed, validator_a)
+    b = select_row_indices(rows, miner_hotkey, seed, validator_b)
+
+    assert a1 == a2
+    assert a1 != b
+

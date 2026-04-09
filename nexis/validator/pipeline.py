@@ -83,6 +83,7 @@ class ValidatorPipeline:
         source_auth_only: bool = False,
         spec_registry: DatasetSpecRegistry | None = None,
         enabled_specs: list[str] | None = None,
+        validator_hotkey: str | None = None,
     ):
         self._store_for_hotkey = store_for_hotkey
         self.weight_computer = weight_computer or WeightComputer()
@@ -91,6 +92,7 @@ class ValidatorPipeline:
         self._expected_category = (expected_category or "").strip() or None
         self._source_authenticity_enabled = source_authenticity_enabled
         self._source_auth_only = source_auth_only
+        self._validator_hotkey = (validator_hotkey or "").strip()
         self._spec_registry = spec_registry or DatasetSpecRegistry.with_defaults()
         if enabled_specs:
             self._enabled_specs = {item.strip() for item in enabled_specs if item.strip()}
@@ -486,7 +488,12 @@ class ValidatorPipeline:
         try:
             spec = self._spec_registry.get(loaded.spec_id)
             records = loaded.records
-            indices = select_row_indices(len(records), loaded.hotkey, interval_seed)
+            indices = select_row_indices(
+                len(records),
+                loaded.hotkey,
+                interval_seed,
+                self._validator_hotkey,
+            )
             sampled = [records[i] for i in indices]
             logger.info(
                 "sampling hotkey=%s interval=%d total_records=%d sampled=%d",

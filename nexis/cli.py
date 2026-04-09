@@ -873,6 +873,7 @@ def validate(
         source_authenticity_enabled=False,
         spec_registry=spec_registry,
         enabled_specs=enabled_specs,
+        validator_hotkey=validator_hotkey,
     )
     reporter: ValidationResultReporter | None = None
     evidence_url = settings.validation_api_url.strip()
@@ -1009,6 +1010,7 @@ def validate_source_auth(
         source_auth_only=True,
         spec_registry=spec_registry,
         enabled_specs=enabled_specs,
+        validator_hotkey=validator_hotkey,
     )
     wallet = bt.wallet(
         name=settings.bt_wallet_name,
