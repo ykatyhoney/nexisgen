@@ -1181,221 +1181,223 @@ async def _run_validator_loop(
                     network=settings.bt_network,
                     subtensor=subtensor,
                 )
-                latest_eligible_interval_start = _latest_eligible_validation_interval_start(current_block)
-                next_interval_start = last_validated_interval_start + INTERVAL_LENGTH_BLOCKS
-                logger.debug(
-                    "validator tick current_block=%d eligible_start=%s next_interval=%d last_validated=%d",
-                    current_block,
-                    str(latest_eligible_interval_start),
-                    next_interval_start,
-                    last_validated_interval_start,
-                )
+                # latest_eligible_interval_start = _latest_eligible_validation_interval_start(current_block)
+                # next_interval_start = last_validated_interval_start + INTERVAL_LENGTH_BLOCKS
+                # logger.debug(
+                #     "validator tick current_block=%d eligible_start=%s next_interval=%d last_validated=%d",
+                #     current_block,
+                #     str(latest_eligible_interval_start),
+                #     next_interval_start,
+                #     last_validated_interval_start,
+                # )
 
-                if latest_eligible_interval_start is not None:
-                    if next_interval_start > latest_eligible_interval_start:
-                        logger.info(
-                            "waiting for next interval to be eligible, current_block=%d, next_interval=(%d, %d)",
-                            current_block,
-                            next_interval_start,
-                            next_interval_start + INTERVAL_LENGTH_BLOCKS,
-                        )
-                        await _sleep_poll(poll_seconds)
-                        continue
-                    store_cache.clear()
-                    hotkeys, payload = await _fetch_hotkeys_with_commitments(
-                        settings=settings,
-                        manager=manager,
-                        exclude_hotkeys=exclude_hotkeys,
-                        subtensor=subtensor,
-                        reporter=reporter,
-                    )
-                    committed_payload.clear()
-                    committed_payload.update(payload)
-                    while next_interval_start <= latest_eligible_interval_start:
-                        if hotkeys:
-                            logger.info(
-                                "validating interval=%s miners=%d",
-                                _interval_label(next_interval_start),
-                                len(hotkeys),
-                            )
-                            invalid_hotkeys_for_interval: set[str] = set()
-                            if reporter is not None:
-                                invalid_hotkeys_for_interval = set(
-                                    await reporter.fetch_invalid_hotkeys(
-                                        interval_id=next_interval_start
-                                    )
-                                )
-                                blacklist_hotkeys_for_interval = {
-                                    value.strip()
-                                    for value in await reporter.fetch_blacklist_hotkeys()
-                                    if value.strip()
-                                }
-                                invalid_hotkeys_for_interval |= blacklist_hotkeys_for_interval
-                                if invalid_hotkeys_for_interval:
-                                    logger.info(
-                                        "api excluded hotkeys interval=%s count=%d",
-                                        _interval_label(next_interval_start),
-                                        len(invalid_hotkeys_for_interval),
-                                    )
-                            global_record_index, record_info_loaded = await _load_record_info_snapshot(
-                                record_info_store=record_info_read_store,
-                                object_key=settings.record_info_object_key,
-                                workdir=settings.workdir / "validator",
-                            )
-                            decisions, interval_weights = await validator.validate_interval(
-                                candidate_hotkeys=hotkeys,
-                                interval_id=next_interval_start,
-                                workdir=settings.workdir / "validator",
-                                global_record_index=global_record_index,
-                                invalid_hotkeys=invalid_hotkeys_for_interval,
-                            )
-                            if reporter is not None:
-                                await reporter.report_interval(
-                                    interval_id=next_interval_start,
-                                    decisions=decisions,
-                                )
-                            for decision in decisions:
-                                if not decision.accepted:
-                                    continue
-                                epoch_score_totals[decision.miner_hotkey] += (
-                                    validator.weight_computer.score_from_sample_count(decision.record_count)
-                                )
-                            # New score material was added; refresh frozen snapshot on next submit.
-                            frozen_epoch_weights = None
-                            frozen_epoch = None
-                            payload_json = [d.model_dump(mode="json") for d in decisions]
-                            console.print(f"validated interval {_interval_label(next_interval_start)}")
-                            console.print_json(json.dumps(payload_json))
-                            console.print("interval weights:")
-                            console.print_json(json.dumps(interval_weights))
-                            console.print("epoch accumulated scores:")
-                            console.print_json(json.dumps(dict(epoch_score_totals)))
-                            logger.debug(
-                                "interval=%s decisions=%d interval_weight_entries=%d epoch_score_entries=%d",
-                                _interval_label(next_interval_start),
-                                len(decisions),
-                                len(interval_weights),
-                                len(epoch_score_totals),
-                            )
-                            if is_owner_validator:
-                                try:
-                                    published_rows_by_hotkey = await _upload_validated_datasets_to_owner_bucket(
-                                        owner_store=record_info_write_store,
-                                        source_store_for_hotkey=store_for_hotkey,
-                                        validator=validator,
-                                        decisions=decisions,
-                                        interval_id=next_interval_start,
-                                        workdir=settings.workdir / "validator",
-                                    )
-                                    for rows in published_rows_by_hotkey.values():
-                                        if not rows:
-                                            continue
-                                        _merge_records_into_index(
-                                            record_index=global_record_index,
-                                            records=rows,
-                                        )
-                                    if record_info_loaded:
-                                        await _upload_record_info_snapshot(
-                                            record_info_store=record_info_write_store,
-                                            object_key=settings.record_info_object_key,
-                                            workdir=settings.workdir / "validator",
-                                            record_index=global_record_index,
-                                        )
-                                    else:
-                                        logger.warning(
-                                            "skipping record-info write interval=%s reason=record_info_read_untrusted",
-                                            _interval_label(next_interval_start),
-                                        )
-                                except Exception as exc:
-                                    logger.exception(
-                                        "owner sync failed for interval=%s: %s",
-                                        _interval_label(next_interval_start),
-                                        exc,
-                                    )
-                        else:
-                            console.print(
-                                "no miners with committed read credentials; "
-                                f"interval {_interval_label(next_interval_start)} skipped"
-                            )
+                # if latest_eligible_interval_start is not None:
+                #     if next_interval_start > latest_eligible_interval_start:
+                #         logger.info(
+                #             "waiting for next interval to be eligible, current_block=%d, next_interval=(%d, %d)",
+                #             current_block,
+                #             next_interval_start,
+                #             next_interval_start + INTERVAL_LENGTH_BLOCKS,
+                #         )
+                #         await _sleep_poll(poll_seconds)
+                #         continue
+                #     store_cache.clear()
+                #     hotkeys, payload = await _fetch_hotkeys_with_commitments(
+                #         settings=settings,
+                #         manager=manager,
+                #         exclude_hotkeys=exclude_hotkeys,
+                #         subtensor=subtensor,
+                #         reporter=reporter,
+                #     )
+                #     committed_payload.clear()
+                #     committed_payload.update(payload)
+                #     while next_interval_start <= latest_eligible_interval_start:
+                #         if hotkeys:
+                #             logger.info(
+                #                 "validating interval=%s miners=%d",
+                #                 _interval_label(next_interval_start),
+                #                 len(hotkeys),
+                #             )
+                #             invalid_hotkeys_for_interval: set[str] = set()
+                #             if reporter is not None:
+                #                 invalid_hotkeys_for_interval = set(
+                #                     await reporter.fetch_invalid_hotkeys(
+                #                         interval_id=next_interval_start
+                #                     )
+                #                 )
+                #                 blacklist_hotkeys_for_interval = {
+                #                     value.strip()
+                #                     for value in await reporter.fetch_blacklist_hotkeys()
+                #                     if value.strip()
+                #                 }
+                #                 invalid_hotkeys_for_interval |= blacklist_hotkeys_for_interval
+                #                 if invalid_hotkeys_for_interval:
+                #                     logger.info(
+                #                         "api excluded hotkeys interval=%s count=%d",
+                #                         _interval_label(next_interval_start),
+                #                         len(invalid_hotkeys_for_interval),
+                #                     )
+                #             global_record_index, record_info_loaded = await _load_record_info_snapshot(
+                #                 record_info_store=record_info_read_store,
+                #                 object_key=settings.record_info_object_key,
+                #                 workdir=settings.workdir / "validator",
+                #             )
+                #             decisions, interval_weights = await validator.validate_interval(
+                #                 candidate_hotkeys=hotkeys,
+                #                 interval_id=next_interval_start,
+                #                 workdir=settings.workdir / "validator",
+                #                 global_record_index=global_record_index,
+                #                 invalid_hotkeys=invalid_hotkeys_for_interval,
+                #             )
+                #             if reporter is not None:
+                #                 await reporter.report_interval(
+                #                     interval_id=next_interval_start,
+                #                     decisions=decisions,
+                #                 )
+                #             for decision in decisions:
+                #                 if not decision.accepted:
+                #                     continue
+                #                 epoch_score_totals[decision.miner_hotkey] += (
+                #                     validator.weight_computer.score_from_sample_count(decision.record_count)
+                #                 )
+                #             # New score material was added; refresh frozen snapshot on next submit.
+                #             frozen_epoch_weights = None
+                #             frozen_epoch = None
+                #             payload_json = [d.model_dump(mode="json") for d in decisions]
+                #             console.print(f"validated interval {_interval_label(next_interval_start)}")
+                #             console.print_json(json.dumps(payload_json))
+                #             console.print("interval weights:")
+                #             console.print_json(json.dumps(interval_weights))
+                #             console.print("epoch accumulated scores:")
+                #             console.print_json(json.dumps(dict(epoch_score_totals)))
+                #             logger.debug(
+                #                 "interval=%s decisions=%d interval_weight_entries=%d epoch_score_entries=%d",
+                #                 _interval_label(next_interval_start),
+                #                 len(decisions),
+                #                 len(interval_weights),
+                #                 len(epoch_score_totals),
+                #             )
+                #             if is_owner_validator:
+                #                 try:
+                #                     published_rows_by_hotkey = await _upload_validated_datasets_to_owner_bucket(
+                #                         owner_store=record_info_write_store,
+                #                         source_store_for_hotkey=store_for_hotkey,
+                #                         validator=validator,
+                #                         decisions=decisions,
+                #                         interval_id=next_interval_start,
+                #                         workdir=settings.workdir / "validator",
+                #                     )
+                #                     for rows in published_rows_by_hotkey.values():
+                #                         if not rows:
+                #                             continue
+                #                         _merge_records_into_index(
+                #                             record_index=global_record_index,
+                #                             records=rows,
+                #                         )
+                #                     if record_info_loaded:
+                #                         await _upload_record_info_snapshot(
+                #                             record_info_store=record_info_write_store,
+                #                             object_key=settings.record_info_object_key,
+                #                             workdir=settings.workdir / "validator",
+                #                             record_index=global_record_index,
+                #                         )
+                #                     else:
+                #                         logger.warning(
+                #                             "skipping record-info write interval=%s reason=record_info_read_untrusted",
+                #                             _interval_label(next_interval_start),
+                #                         )
+                #                 except Exception as exc:
+                #                     logger.exception(
+                #                         "owner sync failed for interval=%s: %s",
+                #                         _interval_label(next_interval_start),
+                #                         exc,
+                #                     )
+                #         else:
+                #             console.print(
+                #                 "no miners with committed read credentials; "
+                #                 f"interval {_interval_label(next_interval_start)} skipped"
+                #             )
 
-                        last_validated_interval_start = next_interval_start
-                        next_interval_start += INTERVAL_LENGTH_BLOCKS
+                #         last_validated_interval_start = next_interval_start
+                #         next_interval_start += INTERVAL_LENGTH_BLOCKS
 
                 current_weight_epoch = current_block // WEIGHT_SUBMISSION_INTERVAL_BLOCKS
                 should_try_submit = (
                     current_weight_epoch > last_submitted_weight_epoch
                     and time.monotonic() >= next_weight_retry_ts
                 )
-                logger.debug(
-                    "weight submission check epoch=%d last_submitted=%d should_try=%s",
-                    current_weight_epoch,
-                    last_submitted_weight_epoch,
-                    str(should_try_submit),
-                )
+                # logger.debug(
+                #     "weight submission check epoch=%d last_submitted=%d should_try=%s",
+                #     current_weight_epoch,
+                #     last_submitted_weight_epoch,
+                #     str(should_try_submit),
+                # )
                 if should_try_submit:
                     submission_block = current_weight_epoch * WEIGHT_SUBMISSION_INTERVAL_BLOCKS
-                    snapshot: dict[str, Any]
-                    if latest_result_url:
-                        try:
-                            snapshot = await fetch_latest_result_snapshot(
-                                url=latest_result_url,
-                                timeout_sec=settings.latest_result_timeout_sec,
-                            )
-                        except RuntimeError as exc:
-                            logger.warning(
-                                "latest-result fetch failed epoch=%d url=%s: %s; "
-                                "continuing with empty API decisions for this weight pass",
-                                current_weight_epoch,
-                                latest_result_url,
-                                exc,
-                            )
-                            snapshot = {"decisions": []}
-                    else:
-                        snapshot = {"decisions": []}
+                    # snapshot: dict[str, Any]
+                    # if latest_result_url:
+                    #     try:
+                    #         snapshot = await fetch_latest_result_snapshot(
+                    #             url=latest_result_url,
+                    #             timeout_sec=settings.latest_result_timeout_sec,
+                    #         )
+                    #     except RuntimeError as exc:
+                    #         logger.warning(
+                    #             "latest-result fetch failed epoch=%d url=%s: %s; "
+                    #             "continuing with empty API decisions for this weight pass",
+                    #             current_weight_epoch,
+                    #             latest_result_url,
+                    #             exc,
+                    #         )
+                    #         snapshot = {"decisions": []}
+                    # else:
+                    #     snapshot = {"decisions": []}
 
-                    decisions_raw = snapshot.get("decisions")
-                    if not isinstance(decisions_raw, list):
-                        decisions_raw = []
-                    decisions: list[dict[str, Any]] = [
-                        row for row in decisions_raw if isinstance(row, dict)
-                    ]
-                    current_interval_id = _current_interval_start(current_block)
-                    invalid_for_submission: set[str] = set()
-                    if reporter is not None:
-                        invalid_for_submission = set(
-                            await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
-                        )
-                        invalid_for_submission |= {
-                            value.strip()
-                            for value in await reporter.fetch_blacklist_hotkeys()
-                            if value.strip()
-                        }
-                    filtered_decisions = decisions
-                    if invalid_for_submission:
-                        filtered_decisions = [
-                            row
-                            for row in decisions
-                            if str(row.get("miner_hotkey", "")).strip() not in invalid_for_submission
-                        ]
-                        logger.info(
-                            "excluded hotkeys before rank scoring count=%d",
-                            len(invalid_for_submission),
-                        )
-                    score_totals = compute_score_totals_from_decisions(
-                        decisions=filtered_decisions,
-                        interval_start=submission_block - 1500 - INTERVAL_LENGTH_BLOCKS,
-                        interval_end=submission_block,
-                        weight_computer=validator.weight_computer,
-                    )
-                    if not score_totals:
-                        logger.info(
-                            "no valid miner hotkeys in epoch=%d; forcing burn fallback to UID0",
-                            current_weight_epoch,
-                        )
-                        frozen_epoch_weights = {}
-                    else:
-                        frozen_epoch_weights = validator.weight_computer.compute_weights_from_totals(dict(score_totals))
-                    logger.info("frozen_epoch_weights: %s", frozen_epoch_weights)
+                    # decisions_raw = snapshot.get("decisions")
+                    # if not isinstance(decisions_raw, list):
+                    #     decisions_raw = []
+                    # decisions: list[dict[str, Any]] = [
+                    #     row for row in decisions_raw if isinstance(row, dict)
+                    # ]
+                    # current_interval_id = _current_interval_start(current_block)
+                    # invalid_for_submission: set[str] = set()
+                    # if reporter is not None:
+                    #     invalid_for_submission = set(
+                    #         await reporter.fetch_invalid_hotkeys(interval_id=current_interval_id)
+                    #     )
+                    #     invalid_for_submission |= {
+                    #         value.strip()
+                    #         for value in await reporter.fetch_blacklist_hotkeys()
+                    #         if value.strip()
+                    #     }
+                    # filtered_decisions = decisions
+                    # if invalid_for_submission:
+                    #     filtered_decisions = [
+                    #         row
+                    #         for row in decisions
+                    #         if str(row.get("miner_hotkey", "")).strip() not in invalid_for_submission
+                    #     ]
+                    #     logger.info(
+                    #         "excluded hotkeys before rank scoring count=%d",
+                    #         len(invalid_for_submission),
+                    #     )
+                    # score_totals = compute_score_totals_from_decisions(
+                    #     decisions=filtered_decisions,
+                    #     interval_start=submission_block - 1500 - INTERVAL_LENGTH_BLOCKS,
+                    #     interval_end=submission_block,
+                    #     weight_computer=validator.weight_computer,
+                    # )
+                    # if not score_totals:
+                    #     logger.info(
+                    #         "no valid miner hotkeys in epoch=%d; forcing burn fallback to UID0",
+                    #         current_weight_epoch,
+                    #     )
+                    #     frozen_epoch_weights = {}
+                    # else:
+                    #     frozen_epoch_weights = validator.weight_computer.compute_weights_from_totals(dict(score_totals))
+                    # logger.info("frozen_epoch_weights: %s", frozen_epoch_weights)
+
+                    frozen_epoch_weights = {}
 
                     submission = await submit_weights_to_chain_async(
                         netuid=settings.netuid,
@@ -1440,6 +1442,10 @@ async def _run_validator_loop(
                         backoff = _weight_retry_backoff_sec(weight_failure_count)
                         next_weight_retry_ts = time.monotonic() + float(backoff)
                         logger.error("set_weights failed: %s", submission.reason)
+                else:
+                    logger.info("waiting for next weight current block=%d submission block=%d next submission block=%d", current_block, current_weight_epoch * WEIGHT_SUBMISSION_INTERVAL_BLOCKS, (current_weight_epoch + 1) * WEIGHT_SUBMISSION_INTERVAL_BLOCKS)
+                    await _sleep_poll(60)
+                    continue
             except Exception as exc:
                 logger.exception("validator loop iteration failed: %s", exc)
 
